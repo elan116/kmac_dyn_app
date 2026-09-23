@@ -42,7 +42,10 @@ class kmac_app_agent_cfg extends dv_base_agent_cfg;
   // True if this app interface is capable of masking
   bit has_masking = 1;
 
+  // Percentage chance that a response-ready policy accepts a valid response on each cycle.
   rand int unsigned rsp_ready_pct;
+
+  // Maximum number of consecutive cycles that a response-ready policy may withhold rsp_ready.
   int unsigned max_rsp_ready_delay = 8;
   kmac_app_rsp_ready_policy rsp_ready_policy;
 

@@ -8,6 +8,7 @@ class kmac_app_host_driver extends dv_base_driver #(.ITEM_T (kmac_app_req_item),
                                                     .CFG_T (kmac_app_agent_cfg));
   `uvm_component_utils(kmac_app_host_driver)
 
+  // Publishes completed KMAC response items to downstream components
   uvm_analysis_port #(kmac_app_rsp_item) m_rsp_port;
 
   extern function new(string name, uvm_component parent);
@@ -21,7 +22,11 @@ class kmac_app_host_driver extends dv_base_driver #(.ITEM_T (kmac_app_req_item),
 
   // Send the request item in req, exiting early on reset
   extern local task send_req();
+
+  // Collect response handshakes and publish completed response items
   extern local task collect_responses();
+
+  // Capture the response fields from the interface into a response item
   extern local function kmac_app_rsp_item capture_response();
 endclass
 

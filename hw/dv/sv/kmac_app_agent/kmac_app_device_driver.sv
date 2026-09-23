@@ -71,7 +71,6 @@ task kmac_app_device_driver::get_and_drive();
 
       // Wait for the next clock edge (so that the item is sent)
       cfg.vif.wait_cycles(1);
-    end else begin
     end
 
     // We've either sent the response or have seen a reset. Invalidate any response either way
