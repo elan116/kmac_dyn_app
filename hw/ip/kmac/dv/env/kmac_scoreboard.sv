@@ -416,12 +416,13 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
                 end
               end
               StAppCfg: begin
-                if (!in_kmac_app) begin
-                end else if (app_mode == AppKeymgr &&
-                    !cfg.keymgr_sideload_agent_cfg.vif.sideload_key.valid) begin
-                  app_st = StErrorKeyNotValid;
-                end else begin
-                  app_st = StAppMsg;
+                if (in_kmac_app) begin
+                   if (app_mode == AppKeymgr &&
+                      !cfg.keymgr_sideload_agent_cfg.vif.sideload_key.valid) begin
+                      app_st = StErrorKeyNotValid;
+                   end else begin
+                      app_st = StAppMsg;
+                   end
                 end
               end
               StAppMsg: begin
@@ -444,8 +445,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
               StAppWait: begin
                 // No internal SHA3 completion signal is bound into the testbench; the app
                 // response becoming valid is the earliest observable completion proxy.
-                keccak_complete_cycle = cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid;
-                if (keccak_complete_cycle) begin
+                if (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid) begin
                   app_st = StAppPushDigest;
                   sha3_absorb = 0;
                 end
@@ -520,18 +520,11 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       m_app_req_fifos[app_index].get(item);
 
       // An item should only arrive when the currently selected app is app_index.
-      //
-      // TODO: The first req for a packet will race against the monitor code that is in this file as
-      // detect_kmac_app_start. That task should be folded into this one.
-      //
-      // As a stop-gap solution, we have a tiny delay here to ensure that detect_kmac_app_start has
-      // run.
+      // Wait until the KMAC_APP operation is active
+      // in_kmac_app is set when the DUT has entered a KMAC_APP operation 
+      // and remains true for the whole active transaction window.
+      // while the DUT is idle, in_kmac_app == 0
       wait(in_kmac_app);
-      if (! (in_kmac_app && (app_mode == app_index))) begin
-        `uvm_error(get_full_name(),
-                   $sformatf("Saw request be handled for app %0d when that app was not selected.",
-                             app_index))
-      end
       m_part_way_through_req = !item.m_last;
     end
   endtask

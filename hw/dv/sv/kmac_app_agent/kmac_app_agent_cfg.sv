@@ -47,6 +47,9 @@ class kmac_app_agent_cfg extends dv_base_agent_cfg;
 
   // Maximum number of consecutive cycles that a response-ready policy may withhold rsp_ready.
   int unsigned max_rsp_ready_delay = 8;
+  // Response-ready policy selected for this app interface;
+  // controls how rsp_ready is asserted when the rtl is ready with responses
+  // to create different kinds of back pressure 
   kmac_app_rsp_ready_policy rsp_ready_policy;
 
   // A queue of digest responses. If the agent is in Device mode, this can be filled by calling

@@ -15,3 +15,5 @@ function kmac_app_host_sequencer::new(string name, uvm_component parent);
   super.new(name, parent);
   m_rsp_fifo = new("m_rsp_fifo", this);
 endfunction
+
+

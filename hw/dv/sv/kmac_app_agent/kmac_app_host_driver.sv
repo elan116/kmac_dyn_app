@@ -8,7 +8,7 @@ class kmac_app_host_driver extends dv_base_driver #(.ITEM_T (kmac_app_req_item),
                                                     .CFG_T (kmac_app_agent_cfg));
   `uvm_component_utils(kmac_app_host_driver)
 
-  // Publishes completed KMAC response items to downstream components
+  // Publishes observed KMAC response items to downstream components
   uvm_analysis_port #(kmac_app_rsp_item) m_rsp_port;
 
   extern function new(string name, uvm_component parent);
@@ -39,7 +39,7 @@ task kmac_app_host_driver::run_phase(uvm_phase phase);
   fork
     super.run_phase(phase);
     collect_responses();
-  join
+  join_none
 endtask
 
 task kmac_app_host_driver::get_and_drive();
@@ -71,7 +71,6 @@ function kmac_app_rsp_item kmac_app_host_driver::capture_response();
 endfunction
 
 task kmac_app_host_driver::collect_responses();
-  bit rsp_ready_q;
   bit rsp_pending;
   kmac_app_rsp_item rsp_item;
 
@@ -79,18 +78,15 @@ task kmac_app_host_driver::collect_responses();
     cfg.vif.host_cb.rsp_ready <= 0;
     wait (!cfg.in_reset);
     cfg.rsp_ready_policy.reset();
-    rsp_ready_q = 0;
     rsp_pending = 0;
 
-    fork : isolation_fork
-      begin
+    fork : isolation_fork begin
+      fork
         wait (cfg.in_reset);
-      end
-      begin
         forever begin
           @(cfg.vif.host_cb);
 
-          if (rsp_pending && rsp_ready_q && cfg.vif.host_cb.rsp_valid) begin
+          if (rsp_pending && cfg.vif.host_cb.rsp_ready && cfg.vif.host_cb.rsp_valid) begin
             m_rsp_port.write(rsp_item);
             rsp_pending = 0;
           end else if (cfg.vif.host_cb.rsp_valid && !rsp_pending) begin
@@ -100,15 +96,11 @@ task kmac_app_host_driver::collect_responses();
 
           // Call the policy every cycle (even right after a handshake and while rsp_valid is low)
           // so that policies such as "always" can hold rsp_ready high without a one-cycle dip.
-          rsp_ready_q = cfg.rsp_ready_policy.get_rsp_ready(
-              cfg.vif.host_cb.rsp_valid,
-              cfg.rsp_ready_pct,
-              cfg.max_rsp_ready_delay);
-          cfg.vif.host_cb.rsp_ready <= rsp_ready_q;
+          cfg.vif.host_cb.rsp_ready <= cfg.rsp_ready_policy.get_rsp_ready(cfg.vif.host_cb.rsp_valid, cfg.rsp_ready_pct, cfg.max_rsp_ready_delay);;
         end
-      end
-    join_any
-    disable isolation_fork;
+      join_any
+      disable fork;
+    end join
   end
 endtask
 

@@ -42,17 +42,13 @@ class kmac_env extends cip_base_env #(
     // Create the concrete policy through the per-interface agent configuration.
     case (policy_name)
       "always": cfg.m_kmac_app_agent_cfg[app_idx].rsp_ready_policy =
-          kmac_app_rsp_ready_always_policy::type_id::create(
-              $sformatf("rsp_ready_policy[%0d]", app_idx));
+          kmac_app_rsp_ready_always_policy::type_id::create(policy_name);
       "always_with_dip": cfg.m_kmac_app_agent_cfg[app_idx].rsp_ready_policy =
-          kmac_app_rsp_ready_always_with_dip_policy::type_id::create(
-              $sformatf("rsp_ready_policy[%0d]", app_idx));
+          kmac_app_rsp_ready_always_with_dip_policy::type_id::create(policy_name);
       "random": cfg.m_kmac_app_agent_cfg[app_idx].rsp_ready_policy =
-          kmac_app_rsp_ready_random_policy::type_id::create(
-              $sformatf("rsp_ready_policy[%0d]", app_idx));
+          kmac_app_rsp_ready_random_policy::type_id::create(policy_name);
       "when_valid": cfg.m_kmac_app_agent_cfg[app_idx].rsp_ready_policy =
-          kmac_app_rsp_ready_when_valid_policy::type_id::create(
-              $sformatf("rsp_ready_policy[%0d]", app_idx));
+          kmac_app_rsp_ready_when_valid_policy::type_id::create(policy_name);
       default: `uvm_fatal(`gfn, $sformatf(
           "Unknown response-ready policy for app interface %0d: %0s",
           app_idx, policy_name))
