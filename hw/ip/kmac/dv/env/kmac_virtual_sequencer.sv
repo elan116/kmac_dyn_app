@@ -11,6 +11,9 @@ class kmac_virtual_sequencer extends cip_base_virtual_sequencer #(
   `uvm_component_new
 
   kmac_app_host_sequencer kmac_app_sequencer_h[kmac_env_pkg::NUM_APP_INTF];
+  // Semantic alias for OTBN's dynamic agent. The indexed array above is retained for existing
+  // static-app and generic app-ID-based sequence code.
+  kmac_app_host_sequencer dynamic_app_sequencer_h;
   key_sideload_sequencer  key_sideload_sequencer_h;
 
 endclass

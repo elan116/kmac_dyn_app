@@ -238,7 +238,12 @@ class kmac_smoke_vseq extends kmac_base_vseq;
         end else begin
           // Wait until the KMAC engine has completely finished
           `uvm_info(`gfn, "waiting for kmac_app operation to finish", UVM_HIGH)
-          wait (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid);
+          if (APP_CFG[app_mode].if_type == kmac_pkg::AppStatic) begin
+            // The static helper returns after driving the final request, so retain the original
+            // response wait. The dynamic helper already drains all accepted response items through
+            // rsp_finish before returning; waiting on rsp_valid here could observe an old beat.
+            wait (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid);
+          end
           `uvm_info(`gfn, "finished waiting for kmac_app operation", UVM_HIGH)
 
           if (kmac_err_type inside

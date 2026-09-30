@@ -71,14 +71,17 @@ function kmac_app_rsp_item kmac_app_host_driver::capture_response();
 endfunction
 
 task kmac_app_host_driver::collect_responses();
-  bit rsp_pending;
-  kmac_app_rsp_item rsp_item;
+  // Retain the ready decision that was driven for the preceding sampling edge. With the clocking
+  // block, the policy is evaluated after sampling and its result is driven for the next edge; using
+  // this retained value identifies the response accepted on the current edge, including adjacent
+  // valid beats in a dynamic digest stream.
+  bit rsp_ready_q;
 
   forever begin
     cfg.vif.host_cb.rsp_ready <= 0;
     wait (!cfg.in_reset);
     cfg.rsp_ready_policy.reset();
-    rsp_pending = 0;
+    rsp_ready_q = 0;
 
     fork : isolation_fork begin
       fork
@@ -86,17 +89,18 @@ task kmac_app_host_driver::collect_responses();
         forever begin
           @(cfg.vif.host_cb);
 
-          if (rsp_pending && cfg.vif.host_cb.rsp_ready && cfg.vif.host_cb.rsp_valid) begin
-            m_rsp_port.write(rsp_item);
-            rsp_pending = 0;
-          end else if (cfg.vif.host_cb.rsp_valid && !rsp_pending) begin
-            rsp_item = capture_response();
-            rsp_pending = 1;
+          if (rsp_ready_q && cfg.vif.host_cb.rsp_valid) begin
+            // Publish only on the ready/valid handshake. Capturing here (rather than latching the
+            // first valid cycle) preserves one item per accepted beat when rsp_valid stays high.
+            m_rsp_port.write(capture_response());
           end
 
           // Call the policy every cycle (even right after a handshake and while rsp_valid is low)
           // so that policies such as "always" can hold rsp_ready high without a one-cycle dip.
-          cfg.vif.host_cb.rsp_ready <= cfg.rsp_ready_policy.get_rsp_ready(cfg.vif.host_cb.rsp_valid, cfg.rsp_ready_pct, cfg.max_rsp_ready_delay);;
+          rsp_ready_q = cfg.rsp_ready_policy.get_rsp_ready(cfg.vif.host_cb.rsp_valid,
+                                                            cfg.rsp_ready_pct,
+                                                            cfg.max_rsp_ready_delay);
+          cfg.vif.host_cb.rsp_ready <= rsp_ready_q;
         end
       join_any
       disable fork;

@@ -14,6 +14,7 @@
 `include "kmac_test_vectors_kmac_xof_vseq.sv"
 `include "kmac_burst_write_vseq.sv"
 `include "kmac_app_vseq.sv"
+`include "kmac_app_dynamic_vseq.sv"
 `include "kmac_app_with_partial_data_vseq.sv"
 `include "kmac_sideload_invalid_vseq.sv"
 `include "kmac_mubi_vseq.sv"

@@ -42,6 +42,12 @@ class kmac_app_agent_cfg extends dv_base_agent_cfg;
   // True if this app interface is capable of masking
   bit has_masking = 1;
 
+  // Selects the monitor's dynamic-session collection mode. Dynamic requests are not a single
+  // request/response packet: OTBN sends a config request, a message ending in req_last, and may
+  // later send a second req_last to terminate output streaming. Its accepted digest parts and
+  // finish response are therefore published as individual response items.
+  bit is_dynamic_app = 0;
+
   // Percentage chance that a response-ready policy accepts a valid response on each cycle.
   rand int unsigned rsp_ready_pct;
 
@@ -98,6 +104,7 @@ function void kmac_app_agent_cfg::do_print(uvm_printer printer);
   printer.print_field_int("constant_share_means_error", constant_share_means_error, 1, UVM_NORADIX);
   printer.print_field_int("inject_zero_in_host_strb", inject_zero_in_host_strb, 1, UVM_NORADIX);
   printer.print_field_int("has_masking", has_masking, 1, UVM_NORADIX);
+  printer.print_field_int("is_dynamic_app", is_dynamic_app, 1, UVM_NORADIX);
   printer.print_field_int("rsp_ready_pct", rsp_ready_pct, 32, UVM_NORADIX);
   printer.print_field_int("max_rsp_ready_delay", max_rsp_ready_delay, 32, UVM_NORADIX);
   printer.print_array_header("rsp_digest_hs", rsp_digest_hs.size(), "queue of rsp_digest_t");

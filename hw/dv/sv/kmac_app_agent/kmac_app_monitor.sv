@@ -22,6 +22,11 @@ class kmac_app_monitor extends dv_base_monitor #(.ITEM_T (kmac_app_mon_item),
   // request packet, that has already been sent through m_req_packet_analysis_port.
   uvm_analysis_port #(kmac_app_req_packet_item) m_req_packet_analysis_port;
 
+  // Publishes each accepted response separately. This is used for dynamic sessions, which can
+  // return multiple digest parts followed by a distinct finish response. Unlike the host driver's
+  // response port, this analysis port is a passive observation path intended for the scoreboard.
+  uvm_analysis_port #(kmac_app_rsp_item) m_rsp_analysis_port;
+
   extern function new (string name, uvm_component parent);
   extern virtual task run_phase(uvm_phase phase);
 
@@ -32,6 +37,9 @@ class kmac_app_monitor extends dv_base_monitor #(.ITEM_T (kmac_app_mon_item),
   //
   // Can be killed at any time if a reset is asserted.
   extern local task collect_between_resets();
+  extern local task collect_dynamic_between_resets();
+  extern local task collect_dynamic_requests();
+  extern local task collect_dynamic_responses();
 
   // Collect request transactions from the bus and add them to packet. Returns when it sees an item
   // with last=1.
@@ -49,6 +57,7 @@ function kmac_app_monitor::new(string name, uvm_component parent);
   super.new(name, parent);
   m_req_analysis_port = new("m_req_analysis_port", this);
   m_req_packet_analysis_port = new("m_req_packet_analysis_port", this);
+  m_rsp_analysis_port = new("m_rsp_analysis_port", this);
 endfunction
 
 task kmac_app_monitor::run_phase(uvm_phase phase);
@@ -95,6 +104,13 @@ task kmac_app_monitor::collect_trans();
 endtask
 
 task kmac_app_monitor::collect_between_resets();
+  if (cfg.is_dynamic_app) begin
+    // A dynamic session can send a termination request while digest responses are still draining.
+    // Do not serialize packet capture and response capture as the static path does.
+    collect_dynamic_between_resets();
+    return;
+  end
+
   forever begin
     kmac_app_mon_item item = kmac_app_mon_item::type_id::create("item");
     populate_request_packet(item.m_req);
@@ -109,6 +125,49 @@ task kmac_app_monitor::collect_between_resets();
 
     ok_to_end = 1;
     analysis_port.write(item);
+  end
+endtask
+
+task kmac_app_monitor::collect_dynamic_between_resets();
+  // Keep both channel observers alive together: each request packet ends at req_last, but that
+  // marker can occur both at the end of message input and later on the separate termination beat.
+  fork
+    collect_dynamic_requests();
+    collect_dynamic_responses();
+  join
+endtask
+
+task kmac_app_monitor::collect_dynamic_requests();
+  forever begin
+    kmac_app_req_packet_item packet = kmac_app_req_packet_item::type_id::create("packet");
+    populate_request_packet(packet);
+    m_req_packet_analysis_port.write(packet);
+    // Suppress end-of-test completion from the request side. Only an accepted finish response
+    // proves that a dynamic session has drained and returned to idle.
+    ok_to_end = 0;
+    // populate_request_packet exits on the sampled final beat. Advance before beginning its next
+    // search so the same req_valid/req_ready edge cannot be mistaken for a new packet's first beat.
+    @(cfg.vif.mon_cb);
+  end
+endtask
+
+task kmac_app_monitor::collect_dynamic_responses();
+  forever begin
+    kmac_app_rsp_item rsp = kmac_app_rsp_item::type_id::create("rsp");
+
+    // Response payload may remain valid for multiple cycles under backpressure. Publish only the
+    // cycle on which the host accepts it, so the scoreboard sees no duplicate stalled beats.
+    while (!(cfg.vif.mon_cb.rsp_valid && cfg.vif.mon_cb.rsp_ready)) @(cfg.vif.mon_cb);
+    rsp.m_digest_s0 = cfg.vif.mon_cb.rsp_digest_s0;
+    rsp.m_digest_s1 = cfg.vif.mon_cb.rsp_digest_s1;
+    rsp.m_error = cfg.vif.mon_cb.rsp_error;
+    rsp.m_finish = cfg.vif.mon_cb.rsp_finish;
+    rsp.m_delay = 0;
+    m_rsp_analysis_port.write(rsp);
+
+    // The finish bit marks the end of the entire dynamic session, not just one digest-rate burst.
+    if (rsp.m_finish) ok_to_end = 1;
+    @(cfg.vif.mon_cb);
   end
 endtask
 
@@ -142,7 +201,7 @@ task kmac_app_monitor::populate_request_packet(kmac_app_req_packet_item packet);
 endtask
 
 task kmac_app_monitor::populate_response(kmac_app_rsp_item rsp);
-  while (cfg.vif.mon_cb.rsp_valid !== 1'b1) @(cfg.vif.mon_cb);
+  while (!(cfg.vif.mon_cb.rsp_valid && cfg.vif.mon_cb.rsp_ready)) @(cfg.vif.mon_cb);
   rsp.m_digest_s0 = cfg.vif.mon_cb.rsp_digest_s0;
   rsp.m_digest_s1 = cfg.vif.mon_cb.rsp_digest_s1;
   rsp.m_error = cfg.vif.mon_cb.rsp_error;

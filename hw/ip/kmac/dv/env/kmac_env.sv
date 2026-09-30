@@ -12,7 +12,10 @@ class kmac_env extends cip_base_env #(
 
   `uvm_component_new
 
-  kmac_app_host_agent m_kmac_app_agent[kmac_env_pkg::NUM_APP_INTF];
+  // The first three app IDs use the existing one-request/one-response static host agent.
+  kmac_app_host_agent m_kmac_app_agent[3];
+  // OTBN is a dynamic session protocol; keep its component path and monitor stream distinct.
+  kmac_app_dynamic_host_agent m_dynamic_app_agent;
   key_sideload_agent  keymgr_sideload_agent;
 
   // Select and construct the response-ready policy for one KMAC application interface. Each
@@ -58,14 +61,23 @@ class kmac_env extends cip_base_env #(
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
 
-    for (int i = 0; i < kmac_env_pkg::NUM_APP_INTF; i++) begin
+    // Preserve the historical indexed UVM names for KeyMgr, LC_CTRL and ROM_CTRL. OTBN is
+    // constructed separately below because its monitor must collect request and response streams
+    // concurrently rather than pairing one request packet with one response.
+    for (int i = 0; i < 3; i++) begin
       string name = $sformatf("m_kmac_app_agent[%0d]", i);
-      // Configure the shared config object before creating the agent. The host agent consumes this
-      // already-selected policy during build and no longer parses response-policy plusargs itself.
       configure_rsp_ready_policy(i);
       m_kmac_app_agent[i] = kmac_app_host_agent::type_id::create(name, this);
       uvm_config_db#(kmac_app_agent_cfg)::set(this, name, "cfg", cfg.m_kmac_app_agent_cfg[i]);
     end
+
+    // AppOtbn remains index 3 in configuration/scoreboard arrays even though its UVM component has
+    // a semantic name rather than occupying element 3 of the static agent array.
+    configure_rsp_ready_policy(kmac_env_pkg::AppOtbn);
+    cfg.m_kmac_app_agent_cfg[kmac_env_pkg::AppOtbn].is_dynamic_app = 1'b1;
+    m_dynamic_app_agent = kmac_app_dynamic_host_agent::type_id::create("m_dynamic_app_agent", this);
+    uvm_config_db#(kmac_app_agent_cfg)::set(this, "m_dynamic_app_agent", "cfg",
+                                            cfg.m_kmac_app_agent_cfg[kmac_env_pkg::AppOtbn]);
 
     // get ext interfaces
     keymgr_sideload_agent = key_sideload_agent#(keymgr_pkg::hw_key_req_t)::type_id::create(
@@ -91,15 +103,29 @@ class kmac_env extends cip_base_env #(
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
 
-    for (int i = 0; i < kmac_env_pkg::NUM_APP_INTF; i++) begin
+    // Keep all passive monitor traffic routed to its original hardware app-ID slot. Scoreboard
+    // indexing is by AppKeymgr/AppLc/AppRom/AppOtbn, not by the new component-array layout.
+    for (int i = 0; i < 3; i++) begin
       m_kmac_app_agent[i].monitor.analysis_port.connect(
         scoreboard.kmac_app_fifo[i].analysis_export);
       m_kmac_app_agent[i].monitor.m_req_analysis_port.connect(
         scoreboard.m_app_req_fifos[i].analysis_export);
 
       virtual_sequencer.kmac_app_sequencer_h[i]  = m_kmac_app_agent[i].sequencer;
-      virtual_sequencer.key_sideload_sequencer_h = keymgr_sideload_agent.sequencer;
     end
+    m_dynamic_app_agent.monitor.analysis_port.connect(
+      scoreboard.kmac_app_fifo[kmac_env_pkg::AppOtbn].analysis_export);
+    m_dynamic_app_agent.monitor.m_req_analysis_port.connect(
+      scoreboard.m_app_req_fifos[kmac_env_pkg::AppOtbn].analysis_export);
+    m_dynamic_app_agent.monitor.m_rsp_analysis_port.connect(
+      scoreboard.m_app_rsp_fifos[kmac_env_pkg::AppOtbn].analysis_export);
+
+    // Preserve the old indexed sequencer handle for callers that still use app IDs; also expose an
+    // explicit dynamic handle to make dynamic-session sequence selection clear at call sites.
+    virtual_sequencer.kmac_app_sequencer_h[kmac_env_pkg::AppOtbn] =
+        m_dynamic_app_agent.sequencer;
+    virtual_sequencer.dynamic_app_sequencer_h = m_dynamic_app_agent.sequencer;
+    virtual_sequencer.key_sideload_sequencer_h = keymgr_sideload_agent.sequencer;
     cfg.keymgr_sideload_agent_cfg.start_default_seq = 0;
 
   endfunction

@@ -115,6 +115,25 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
   // by the reset function.
   bit m_part_way_through_req;
 
+  // Dynamic sessions have configuration and response-stream boundaries that are not represented
+  // by the static monitor's single request-packet/single-response item. Keep the decoded config and
+  // the output shares here until the separately accepted finish response closes the session.
+  kmac_pkg::app_ses_config_t dynamic_session_cfg;
+  // Phase markers for the ordered dynamic request stream: config -> message -> optional termination.
+  bit dynamic_cfg_valid;
+  bit dynamic_cfg_req_seen;
+  bit dynamic_msg_complete;
+  bit dynamic_termination_seen;
+  bit dynamic_rsp_error;
+  // The active session temporarily overrides software-selected mode fields. Save them so CSR-mode
+  // checking resumes with the pre-session values once OTBN finishes.
+  bit dynamic_prev_kmac_en;
+  sha3_pkg::sha3_mode_e dynamic_prev_hash_mode;
+  // Dynamic digest output is assembled by accepted response beat. Share separation must be retained
+  // until check_digest() XORs it for the masked configuration.
+  bit [7:0] dynamic_digest_share0[$];
+  bit [7:0] dynamic_digest_share1[$];
+
   // secret keys
   //
   // max key size is 512-bits
@@ -154,6 +173,9 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
 
   // TLM fifos
   uvm_tlm_analysis_fifo #(kmac_app_mon_item) kmac_app_fifo[NUM_APP_INTF];
+  // Dynamic response beats are independent transactions, not attached to a request packet. This
+  // FIFO is populated only by the passive monitor's ready/valid response-handshake stream.
+  uvm_tlm_analysis_fifo #(kmac_app_rsp_item) m_app_rsp_fifos[NUM_APP_INTF];
 
   // A FIFO for each application interface that subscribes to (words from) requests seen by the
   // monitor. Using a fifo rather than an import makes it easy to keep track of which application
@@ -168,6 +190,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     super.build_phase(phase);
     for (int i = 0; i < NUM_APP_INTF; i++) begin
       kmac_app_fifo[i] = new($sformatf("kmac_app_fifo[%0d]", i), this);
+      m_app_rsp_fifos[i] = new($sformatf("m_app_rsp_fifos[%0d]", i), this);
       m_app_req_fifos[i] = new($sformatf("m_app_req_fifos[%0d]", i), this);
     end
   endfunction
@@ -182,6 +205,9 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
           process_kmac_app_fsm();
           process_edn();
           process_kmac_app_fifo();
+          // Static sessions keep using the complete packet/response transaction above; dynamic
+          // sessions have their own stream consumer that releases OTBN only on rsp_finish.
+          process_kmac_app_dynamic_rsp_fifo();
           process_sideload_key();
           manage_fifo_empty_intr();
         join_none
@@ -332,7 +358,8 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
             wait(!in_kmac_app && app_fsm_active &&
                  (`KMAC_APP_VALID_TRANS(AppKeymgr) ||
                   `KMAC_APP_VALID_TRANS(AppLc) ||
-                  `KMAC_APP_VALID_TRANS(AppRom)));
+              `KMAC_APP_VALID_TRANS(AppRom) ||
+              `KMAC_APP_VALID_TRANS(AppOtbn)));
             sha3_idle = 0;
             sha3_absorb = 1;
 
@@ -348,8 +375,8 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
               app_mode = AppRom;
               strength = APP_CFG[app_mode].session_cfg.kstrength;
             end else if (`KMAC_APP_VALID_TRANS(AppOtbn)) begin
-              `uvm_fatal(get_full_name(),
-                         "Cannot start KMAC app for OTBN (no support for dynamic apps yet)")
+              app_mode = AppOtbn;
+              configure_dynamic_app_session();
             end
             in_kmac_app = 1;
             `uvm_info(`gfn, "Raised in_kmac_app and sha3_absorb. Dropped sha3_idle.", UVM_HIGH)
@@ -378,7 +405,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
           end
           ,
           wait(cfg.under_reset || kmac_err.code == ErrKeyNotValid ||
-               cfg.kmac_vif.lc_escalate_en_i != lc_ctrl_pkg::Off)
+            cfg.kmac_vif.lc_escalate_en_i != lc_ctrl_pkg::Off);
       )
       if (cfg.under_reset || cfg.kmac_vif.lc_escalate_en_i != lc_ctrl_pkg::Off) begin
         @(negedge cfg.under_reset);
@@ -392,6 +419,38 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       wait(!cfg.under_reset);
     end
   endtask
+
+  // Decode the first accepted OTBN request and install its run-time hash settings. Kept outside
+  // detect_kmac_app_start()'s DV_SPINWAIT_EXIT macro body so nested case items and UVM fatal macros
+  // are parsed as ordinary SystemVerilog rather than as part of a macro argument.
+  virtual function void configure_dynamic_app_session();
+    dynamic_prev_kmac_en = kmac_en;
+    dynamic_prev_hash_mode = hash_mode;
+    dynamic_session_cfg = kmac_pkg::app_ses_config_t'(
+        cfg.m_kmac_app_agent_cfg[AppOtbn].vif.mon_cb.req_data_s0[
+            $bits(kmac_pkg::app_ses_config_t)-1:0]);
+    dynamic_cfg_valid = 1'b1;
+    dynamic_cfg_req_seen = 1'b0;
+    dynamic_msg_complete = 1'b0;
+    dynamic_termination_seen = 1'b0;
+    dynamic_rsp_error = 1'b0;
+    dynamic_digest_share0.delete();
+    dynamic_digest_share1.delete();
+    strength = dynamic_session_cfg.kstrength;
+    kmac_en = (dynamic_session_cfg.mode == kmac_pkg::AppKMAC);
+
+    // The DPI model uses SHA3 mode enums, while app_ses_config_t distinguishes AppKMAC from
+    // AppCShake. Both use the cSHAKE datapath; kmac_en selects KMAC-specific key/prefix behavior.
+    case (dynamic_session_cfg.mode)
+      kmac_pkg::AppSHA3: hash_mode = sha3_pkg::Sha3;
+      kmac_pkg::AppShake: hash_mode = sha3_pkg::Shake;
+      kmac_pkg::AppCShake: hash_mode = sha3_pkg::CShake;
+      kmac_pkg::AppKMAC: hash_mode = sha3_pkg::CShake;
+      default: `uvm_fatal(get_full_name(), "Invalid dynamic application mode")
+    endcase
+
+    if (kmac_en && entropy_ready) incr_and_predict_hash_cnt();
+  endfunction
 
   // This task models the internal FSM of kmac_app module,
   // required for error handling SW output.
@@ -408,7 +467,8 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
                 if (!in_kmac_app &&
                     (cfg.m_kmac_app_agent_cfg[AppKeymgr].vif.mon_cb.req_valid ||
                      cfg.m_kmac_app_agent_cfg[AppLc].vif.mon_cb.req_valid ||
-                     cfg.m_kmac_app_agent_cfg[AppRom].vif.mon_cb.req_valid)) begin
+                   cfg.m_kmac_app_agent_cfg[AppRom].vif.mon_cb.req_valid ||
+                   cfg.m_kmac_app_agent_cfg[AppOtbn].vif.mon_cb.req_valid)) begin
                   app_st = StAppCfg;
                   app_fsm_active = 1;
                 end else if (checked_kmac_cmd == CmdStart) begin
@@ -445,13 +505,37 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
               StAppWait: begin
                 // No internal SHA3 completion signal is bound into the testbench; the app
                 // response becoming valid is the earliest observable completion proxy.
-                if (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid) begin
+                if (app_mode == AppOtbn) begin
+                  // A dynamic digest beat is not session completion. Keep the modeled operation
+                  // active across chunks and release it only on the accepted finish beat.
+                  if (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid &&
+                      cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_finish &&
+                      cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_ready) begin
+                    app_st = StAppFinish;
+                    sha3_absorb = 0;
+                  end else if (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid) begin
+                    app_st = StAppPushDigest;
+                    sha3_absorb = 0;
+                  end
+                end else if (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid) begin
                   app_st = StAppPushDigest;
                   sha3_absorb = 0;
                 end
               end
               StAppPushDigest: begin
-                app_st = StAppFinish;
+                if (app_mode == AppOtbn) begin
+                  // A valid digest can be stalled or followed immediately by another beat. Return
+                  // to the wait state between beats; only an accepted finish advances to StAppFinish.
+                  if (cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_valid &&
+                      cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_finish &&
+                      cfg.m_kmac_app_agent_cfg[app_mode].vif.mon_cb.rsp_ready) begin
+                    app_st = StAppFinish;
+                  end else begin
+                    app_st = StAppWait;
+                  end
+                end else begin
+                  app_st = StAppFinish;
+                end
               end
               StAppFinish: begin
                 app_st = StIdle;
@@ -525,7 +609,28 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       // and remains true for the whole active transaction window.
       // while the DUT is idle, in_kmac_app == 0
       wait(in_kmac_app);
-      m_part_way_through_req = !item.m_last;
+      if (app_index == AppOtbn) begin
+        if (!dynamic_cfg_req_seen) begin
+          // Do not append config bytes to the hash input. detect_kmac_app_start() decoded this same
+          // accepted request directly from the interface before this FIFO consumer runs.
+          dynamic_cfg_req_seen = 1'b1;
+        end else if (!dynamic_msg_complete) begin
+          // Dynamic OTBN is configured as masked in the app table, so recover the logical message
+          // byte by XORing the two request shares. m_last here marks the end of message absorption.
+          for (int byte_idx = 0; byte_idx < item.m_num_bytes; byte_idx++) begin
+            kmac_app_msg.push_back(((item.m_data_s0 >> (byte_idx * 8)) & 8'hff) ^
+                                   ((item.m_data_s1 >> (byte_idx * 8)) & 8'hff));
+          end
+          if (item.m_last) dynamic_msg_complete = 1'b1;
+        end else if (item.m_last) begin
+          // A later req_last, after message completion, is the dynamic session termination request;
+          // its zero strobe means it contributes no additional message bytes.
+          dynamic_termination_seen = 1'b1;
+        end
+      end else begin
+        m_part_way_through_req = !item.m_last;
+      end
+      if (app_index == AppOtbn) m_part_way_through_req = !item.m_last;
     end
   endtask
 
@@ -541,7 +646,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
   // the KMAC_APP digest and clearing internal state for the next hash operation.
   virtual task process_kmac_app_fifo();
     forever begin
-      wait(!cfg.under_reset && in_kmac_app);
+      wait(!cfg.under_reset && in_kmac_app && app_mode != AppOtbn);
 
       // Check that there is nothing in the fifo at the moment. This is a consistency check: we
       // should notice that we have started the app quite a while before any information gets
@@ -629,6 +734,42 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
         join_any
         disable fork;
       end join
+    end
+  endtask
+
+  // Consume accepted response beats for a dynamic session. Digest parts accumulate until the
+  // separate finish response is handshaked; only then is the session checked and released.
+  virtual task process_kmac_app_dynamic_rsp_fifo();
+    forever begin
+      kmac_app_rsp_item item;
+      // Each FIFO entry corresponds to rsp_valid && rsp_ready observed by the passive monitor.
+      m_app_rsp_fifos[AppOtbn].get(item);
+      wait(in_kmac_app && app_mode == AppOtbn);
+
+      // Errors can be reported on an ordinary digest beat or deferred to finish. Remember any
+      // error so the complete output is not compared as if it were a valid digest.
+      if (item.m_error) dynamic_rsp_error = 1'b1;
+      if (!item.m_finish && !item.m_error) begin
+        // DynAppDigestW is 64 bits for this IP, so each response contributes eight bytes per share.
+        for (int byte_idx = 0; byte_idx < kmac_pkg::DynAppDigestW / 8; byte_idx++) begin
+          dynamic_digest_share0.push_back((item.m_digest_s0 >> (byte_idx * 8)) & 8'hff);
+          dynamic_digest_share1.push_back((item.m_digest_s1 >> (byte_idx * 8)) & 8'hff);
+        end
+      end
+
+      if (item.m_finish) begin
+        // finish is the session boundary, not a digest chunk. Check all accumulated output before
+        // clearing the message/config state used by the DPI model.
+        if (!dynamic_rsp_error && do_check_digest) check_digest();
+        in_kmac_app = 0;
+        sha3_squeeze = 0;
+        sha3_absorb = 0;
+        sha3_idle = 1;
+        strength = strength_csr;
+        kmac_en = dynamic_prev_kmac_en;
+        hash_mode = dynamic_prev_hash_mode;
+        clear_state();
+      end
     end
   endtask
 
@@ -1414,18 +1555,29 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
 
     kmac_app_digest_share0 = '0;
     kmac_app_digest_share1 = '0;
+    dynamic_session_cfg = '0;
+    // Clear every dynamic protocol marker and queue together with ordinary per-operation state,
+    // including on reset and after a successfully finished dynamic session.
+    dynamic_cfg_valid = 0;
+    dynamic_cfg_req_seen = 0;
+    dynamic_msg_complete = 0;
+    dynamic_termination_seen = 0;
+    dynamic_rsp_error = 0;
+    dynamic_digest_share0.delete();
+    dynamic_digest_share1.delete();
   endfunction
 
-  // This function is called whenever a CmdDone command is issued to KMAC,
-  // and will compare the seen digest against the digest calculated from the DPI model.
+  // Compare the observed digest against the DPI model. Software/static sessions call this around
+  // CmdDone or their one-shot response; a dynamic app calls it after the accepted finish response,
+  // once all streamed digest chunks have been assembled.
   //
   // Though we don't have direct access to the specified output length for XOF functions,
   // the last byte written to the msgfifo (only for XOFs) will be the number of preceding bytes
   // that encode the requested output length.
   // From this we can decode what the initially requested output length is.
   //
-  // We also need to decode what the prefix is (only for KMAC), as only the encoded values
-  // are written to the CSRs.  virtual function void check_digest();
+  // For static/SW KMAC, decode the prefix from the CSR representation. Dynamic prefix selection is
+  // handled by get_fname_and_custom_str() according to the RTL's mode-specific rule.
   virtual function void check_digest();
 
     // Cast to an array so we can pass this into the DPI functions
@@ -1462,11 +1614,24 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     int key_word_len, key_byte_len;
 
     // Actual hash_mode based on interface or SW register
-    sha3_pkg::sha3_mode_e actual_hash_mode = in_kmac_app ? sha3_pkg::CShake : hash_mode;
+    sha3_pkg::sha3_mode_e actual_hash_mode = hash_mode;
 
     bit use_keymgr_keys = sideload_en || (in_kmac_app && app_mode == AppKeymgr);
 
     if (cfg.en_scb == 0) return;
+
+    if (in_kmac_app && app_mode == AppOtbn) begin
+      // Use the run-time mode carried by OTBN's config item; APP_CFG[AppOtbn].session_cfg is only
+      // the compile-time default and need not match this particular transaction.
+      case (dynamic_session_cfg.mode)
+        kmac_pkg::AppSHA3: actual_hash_mode = sha3_pkg::Sha3;
+        kmac_pkg::AppShake: actual_hash_mode = sha3_pkg::Shake;
+        kmac_pkg::AppCShake, kmac_pkg::AppKMAC: actual_hash_mode = sha3_pkg::CShake;
+        default: `uvm_fatal(get_full_name(), "Invalid dynamic application mode in digest check")
+      endcase
+    end else if (in_kmac_app) begin
+      actual_hash_mode = sha3_pkg::CShake;
+    end
 
     if (use_keymgr_keys) key_len = key_len_e'(Key256);
     key_word_len = get_key_size_words(key_len);
@@ -1479,11 +1644,28 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     // - the expected output length in bytes
     // - if we are using the xof version of kmac
     if (in_kmac_app) begin
-      // Static app interfaces always return 512 bits (64 bytes).
-      output_len_bytes = AppDigestW / 8;
-      // xof_en is 1 when the padded output length is 0,
-      // but this will never happen in KMAC_APP
-      xof_en = 0;
+      if (app_mode == AppOtbn) begin
+        // SHA3 has a mode-defined output size; SHAKE/cSHAKE/KMAC output length is the number of
+        // accepted bytes assembled from the dynamic response stream (the directed XOF test stops
+        // after its chosen finite number of chunks).
+        xof_en = dynamic_session_cfg.en_xof;
+        case (dynamic_session_cfg.mode)
+          kmac_pkg::AppSHA3: begin
+            case (dynamic_session_cfg.kstrength)
+              sha3_pkg::L224: output_len_bytes = 28;
+              sha3_pkg::L256: output_len_bytes = 32;
+              sha3_pkg::L384: output_len_bytes = 48;
+              sha3_pkg::L512: output_len_bytes = 64;
+              default: `uvm_fatal(get_full_name(), "Invalid SHA3 strength in dynamic session")
+            endcase
+          end
+          default: output_len_bytes = dynamic_digest_share0.size();
+        endcase
+      end else begin
+        // Static app interfaces always return 512 bits (64 bytes) and never use XOF mode.
+        output_len_bytes = AppDigestW / 8;
+        xof_en = 0;
+      end
     end else begin
       get_digest_len_and_xof(output_len_bytes, xof_en, msg);
 
@@ -1519,7 +1701,13 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     // Calculate the actual digest //
     /////////////////////////////////
     if (cfg.enable_masking) begin
-      if (in_kmac_app) begin
+      if (in_kmac_app && app_mode == AppOtbn) begin
+        // Assemble each share independently first; XORing before byte extraction would lose the
+        // response stream's byte ordering.
+        foreach (unmasked_digest[i]) begin
+          unmasked_digest[i] = dynamic_digest_share0[i] ^ dynamic_digest_share1[i];
+        end
+      end else if (in_kmac_app) begin
        unmasked_digest = {<< byte {kmac_app_digest_share0 ^ kmac_app_digest_share1}};
       end else begin
         foreach (unmasked_digest[i]) begin
@@ -1527,7 +1715,9 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
         end
       end
     end else begin
-      if (in_kmac_app) begin
+      if (in_kmac_app && app_mode == AppOtbn) begin
+        foreach (unmasked_digest[i]) unmasked_digest[i] = dynamic_digest_share0[i];
+      end else if (in_kmac_app) begin
         unmasked_digest = {<< byte {kmac_app_digest_share0}};
       end else begin
         unmasked_digest = digest_share0;
@@ -1749,7 +1939,12 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     byte fname_arr[];
     byte custom_str_arr[];
 
-    if (en_kmac_app && APP_CFG[app_mode].session_cfg.prefix_mode) begin
+    // The RTL ignores dynamic prefix_mode: dynamic KMAC always uses the compile-time app prefix,
+    // while dynamic cSHAKE uses the PREFIX CSRs. Static interfaces still follow their configured
+    // prefix_mode bit.
+    if (en_kmac_app &&
+      ((app_mode == AppOtbn && dynamic_session_cfg.mode == kmac_pkg::AppKMAC) ||
+       (app_mode != AppOtbn && APP_CFG[app_mode].session_cfg.prefix_mode))) begin
       prefix_bytes = {<< byte {APP_CFG[app_mode].prefix}};
     end else begin
       prefix_bytes = {<< 32 {prefix}};

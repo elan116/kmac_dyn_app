@@ -38,6 +38,8 @@ filesets:
       - seq_lib/kmac_test_vectors_kmac_xof_vseq.sv: {is_include_file: true}
       - seq_lib/kmac_burst_write_vseq.sv: {is_include_file: true}
       - seq_lib/kmac_app_vseq.sv: {is_include_file: true}
+      # Directed OTBN regression; keep the existing app_vseq's static-app constraints intact.
+      - seq_lib/kmac_app_dynamic_vseq.sv: {is_include_file: true}
       - seq_lib/kmac_app_with_partial_data_vseq.sv: {is_include_file: true}
       - seq_lib/kmac_sideload_invalid_vseq.sv: {is_include_file: true}
       - seq_lib/kmac_entropy_refresh_vseq.sv: {is_include_file: true}

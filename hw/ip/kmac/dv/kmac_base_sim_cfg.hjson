@@ -184,6 +184,14 @@
       reseed: 25
     }
     {
+      name: "{name}_app_dynamic"
+      uvm_test_seq: kmac_app_dynamic_vseq
+      // Single directed seed isolates protocol bring-up; broaden reseeding after dynamic modes are
+      // covered by the scoreboard and response-stream checks.
+      run_opts: ["+test_timeout_ns=500_000_000"]
+      reseed: 1
+    }
+    {
       name: "{name}_app_with_partial_data"
       uvm_test_seq: kmac_app_with_partial_data_vseq
       run_opts: ["+test_timeout_ns=500_000_000"]

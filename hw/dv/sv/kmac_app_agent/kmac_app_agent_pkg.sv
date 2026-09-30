@@ -42,11 +42,19 @@ package kmac_app_agent_pkg;
 
   `include "kmac_app_host_sequencer.sv"
   `include "kmac_app_host_driver.sv"
+  // The dynamic driver subclasses the common electrical host driver; dynamic protocol ordering is
+  // implemented by its dedicated sequence, not by duplicating signal-level handshake code.
+  `include "kmac_app_dynamic_host_driver.sv"
 
   `include "seq_lib/kmac_app_device_seq.sv"
   `include "seq_lib/kmac_app_host_seq.sv"
+  // Include after the common host sequence and sequencer because the dynamic sequence reuses both.
+  `include "seq_lib/kmac_app_dynamic_host_seq.sv"
 
   `include "kmac_app_device_agent.sv"
   `include "kmac_app_host_agent.sv"
+  // OTBN gets its own factory type so the environment can attach dynamic-only monitoring/driver
+  // behavior while static application instances retain the original agent class.
+  `include "kmac_app_dynamic_host_agent.sv"
 
 endpackage: kmac_app_agent_pkg

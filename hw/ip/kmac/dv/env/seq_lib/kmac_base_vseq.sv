@@ -574,16 +574,47 @@ class kmac_base_vseq extends cip_base_vseq #(
 
   // Call this task to initiate a KMAC_APP hashing operation
   task send_kmac_app_req(kmac_app_e mode);
-    kmac_app_host_seq kmac_app_seq = kmac_app_host_seq::type_id::create("kmac_app_seq");
+    if (APP_CFG[mode].if_type == kmac_pkg::AppDynamic) begin
+      // Translate the SW-facing vseq controls to the app interface's session enum. KMAC uses the
+      // cSHAKE datapath but is represented as AppKMAC so the dynamic RTL applies its key/prefix and
+      // fixed output-length rules.
+      kmac_app_dynamic_host_seq dynamic_seq;
+      kmac_pkg::app_ses_config_t dynamic_cfg = '0;
 
-    if (!kmac_app_seq.randomize()) begin
-      `uvm_fatal(get_full_name(), "Failed to randomize kmac_app_seq")
+      dynamic_cfg.prefix_mode = 1'b0;
+      dynamic_cfg.kstrength = strength;
+      if (kmac_en) begin
+        dynamic_cfg.mode = kmac_pkg::AppKMAC;
+      end else begin
+        case (hash_mode)
+          sha3_pkg::Sha3: dynamic_cfg.mode = kmac_pkg::AppSHA3;
+          sha3_pkg::Shake: dynamic_cfg.mode = kmac_pkg::AppShake;
+          sha3_pkg::CShake: dynamic_cfg.mode = kmac_pkg::AppCShake;
+          default: `uvm_fatal(get_full_name(), "Unsupported dynamic application hash mode")
+        endcase
+      end
+      // Vseq xof_en also covers SW KMAC-XOF, which the dynamic app interface does not allow.
+      dynamic_cfg.en_xof = xof_en && (dynamic_cfg.mode inside {kmac_pkg::AppShake,
+                                                               kmac_pkg::AppCShake});
+
+      dynamic_seq = kmac_app_dynamic_host_seq::type_id::create("dynamic_seq");
+      dynamic_seq.session_cfg = dynamic_cfg;
+      // The dynamic sequence sends the configuration before these message bytes and then owns the
+      // response-drain/termination handshake. The static sequence path below remains unchanged.
+      dynamic_seq.msg_size_bytes = msg.size();
+      dynamic_seq.start(p_sequencer.dynamic_app_sequencer_h);
+    end else begin
+      kmac_app_host_seq kmac_app_seq = kmac_app_host_seq::type_id::create("kmac_app_seq");
+
+      if (!kmac_app_seq.randomize()) begin
+        `uvm_fatal(get_full_name(), "Failed to randomize kmac_app_seq")
+      end
+
+      kmac_app_seq.msg_size_bytes = msg.size();
+      kmac_app_seq.m_using_masked_interface = APP_CFG[mode].masked;
+
+      kmac_app_seq.start(p_sequencer.kmac_app_sequencer_h[mode]);
     end
-
-    kmac_app_seq.msg_size_bytes           = msg.size();
-    kmac_app_seq.m_using_masked_interface = APP_CFG[mode].masked;
-
-    kmac_app_seq.start(p_sequencer.kmac_app_sequencer_h[mode]);
   endtask
 
   // This task writes a generic byte array into the msg_fifo

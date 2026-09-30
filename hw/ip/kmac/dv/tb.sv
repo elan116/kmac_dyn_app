@@ -54,10 +54,16 @@ module tb;
                        .rsp   (rsp));
 
     initial begin
-      uvm_config_db#(virtual kmac_app_if)::set(null,
-                                               $sformatf("*env.m_kmac_app_agent[%0d]*", i),
-                                               "vif",
-                                               app_if);
+      // The agent instance names are now protocol-specific: OTBN has its own dynamic agent, while
+      // app IDs 0..2 retain the original indexed static-agent paths.
+      if (i == AppOtbn) begin
+        uvm_config_db#(virtual kmac_app_if)::set(null, "*env.m_dynamic_app_agent*", "vif",
+                                                 app_if);
+      end else begin
+        uvm_config_db#(virtual kmac_app_if)::set(null,
+                                                 $sformatf("*env.m_kmac_app_agent[%0d]*", i),
+                                                 "vif", app_if);
+      end
     end
 
     ErrOutputZeros_A:

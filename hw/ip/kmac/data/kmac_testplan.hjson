@@ -112,6 +112,20 @@
       tests: ["{name}_app"]
     }
     {
+      name: app_dynamic
+      desc: '''
+            Exercise the dynamic OTBN application interface with a runtime SHAKE configuration.
+            The host sends the packed session configuration as the first request, absorbs the
+            message with its own final req_last, accepts a finite number of XOF digest chunks,
+            sends a second zero-strobe req_last to terminate squeezing, and drains any pipelined
+            responses through the accepted rsp_finish beat. The passive monitor publishes each
+            accepted response independently so the scoreboard can verify stream ordering and the
+            assembled digest without using host-driver observations as its source of truth.
+            '''
+      stage: V2
+      tests: ["{name}_app_dynamic"]
+    }
+    {
       name: app_with_partial_data
       desc: '''
             Based on the kmac_app test, this test will send partial data from application interface
