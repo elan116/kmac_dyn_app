@@ -780,6 +780,15 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
             `uvm_fatal(get_full_name(), "Fixed-output dynamic test received an error response")
           end
         end
+        if (cfg.require_valid_dynamic_kmac_rsp) begin
+          if (!dynamic_cfg_valid || dynamic_session_cfg.mode != kmac_pkg::AppKMAC ||
+              dynamic_session_cfg.en_xof || !kmac_en || !do_check_digest) begin
+            `uvm_fatal(get_full_name(), "DA-005 did not complete a checked fixed-output KMAC session")
+          end
+          if (dynamic_rsp_error) begin
+            `uvm_fatal(get_full_name(), "DA-005 received an error instead of a KMAC digest")
+          end
+        end
         if (dynamic_cfg_valid && dynamic_session_cfg.mode == kmac_pkg::AppSHA3 &&
             !dynamic_rsp_error && do_check_digest) begin
           int unsigned expected_beats;
@@ -811,6 +820,12 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
                              expected_beats * (kmac_pkg::DynAppDigestW / 8))
           `DV_CHECK_EQ_FATAL(dynamic_digest_share1.size(),
                              expected_beats * (kmac_pkg::DynAppDigestW / 8))
+        end
+        if (dynamic_cfg_valid && dynamic_session_cfg.mode == kmac_pkg::AppKMAC &&
+            !dynamic_rsp_error && do_check_digest) begin
+          // Dynamic KMAC returns the configured 512-bit app digest in eight 64-bit handshakes.
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(), kmac_pkg::AppDigestW / 8)
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share1.size(), kmac_pkg::AppDigestW / 8)
         end
         if (!dynamic_rsp_error && do_check_digest) check_digest();
         in_kmac_app = 0;
@@ -1668,7 +1683,12 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     // Actual hash_mode based on interface or SW register
     sha3_pkg::sha3_mode_e actual_hash_mode = hash_mode;
 
-    bit use_keymgr_keys = sideload_en || (in_kmac_app && app_mode == AppKeymgr);
+    // Dynamic KMAC always consumes the KeyMgr sideload interface, just like the static KeyMgr
+    // application. Do not fall back to uninitialized software key-share CSRs for AppOtbn.
+    bit use_keymgr_keys = sideload_en ||
+                (in_kmac_app && app_mode == AppKeymgr) ||
+                (in_kmac_app && app_mode == AppOtbn &&
+                 dynamic_session_cfg.mode == kmac_pkg::AppKMAC);
 
     if (cfg.en_scb == 0) return;
 

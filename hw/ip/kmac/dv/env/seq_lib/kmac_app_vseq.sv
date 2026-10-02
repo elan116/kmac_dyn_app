@@ -40,7 +40,12 @@ class kmac_app_vseq extends kmac_sideload_vseq;
     if (en_app) {
       if (app_mode == AppKeymgr) {
         kmac_en == 1;
+      } else if (app_mode == AppOtbn) {
+        // Dynamic OTBN can request KMAC at runtime. KMAC uses the cSHAKE datapath, while
+        // kmac_en distinguishes AppKMAC from ordinary dynamic SHA3/SHAKE/cSHAKE sessions.
+        if (kmac_en) hash_mode == sha3_pkg::CShake;
       } else {
+        // The static LC_CTRL and ROM_CTRL interfaces are always cSHAKE, never KMAC.
         kmac_en == 0;
       }
     } else {

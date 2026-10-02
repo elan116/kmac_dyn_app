@@ -15,6 +15,7 @@
 `include "kmac_burst_write_vseq.sv"
 `include "kmac_app_vseq.sv"
 `include "kmac_app_dynamic_vseq.sv"
+// Dynamic application mode-specific tests are declared with the common dynamic sequence.
 `include "kmac_app_with_partial_data_vseq.sv"
 `include "kmac_sideload_invalid_vseq.sv"
 `include "kmac_mubi_vseq.sv"

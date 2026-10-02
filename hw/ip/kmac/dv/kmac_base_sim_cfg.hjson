@@ -213,6 +213,13 @@
       reseed: 1
     }
     {
+      // DA-005 checks dynamic KMAC mode, sideload-key usage, fixed prefix and digest prediction.
+      name: "{name}_app_dynamic_kmac"
+      uvm_test_seq: kmac_app_dynamic_kmac_vseq
+      run_opts: ["+test_timeout_ns=1_000_000_000"]
+      reseed: 1
+    }
+    {
       name: "{name}_app_with_partial_data"
       uvm_test_seq: kmac_app_with_partial_data_vseq
       run_opts: ["+test_timeout_ns=500_000_000"]
@@ -287,6 +294,10 @@
     {
       name: dynamic_app_sha3
       tests: ["{name}_app_dynamic_sha3"]
+    }
+    {
+      name: dynamic_app_kmac
+      tests: ["{name}_app_dynamic_kmac"]
     }
   ]
 }

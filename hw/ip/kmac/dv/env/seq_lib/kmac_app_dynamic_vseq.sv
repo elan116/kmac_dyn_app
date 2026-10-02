@@ -159,6 +159,46 @@ class kmac_app_dynamic_cshake_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
+// DA-005: exercise dynamic KMAC using the OTBN sideload key and the compile-time KMAC prefix.
+class kmac_app_dynamic_kmac_vseq extends kmac_app_dynamic_vseq;
+  `uvm_object_utils(kmac_app_dynamic_kmac_vseq)
+  `uvm_object_new
+
+  constraint num_trans_c {
+    num_trans == 1;
+  }
+
+  constraint dynamic_kmac_mode_c {
+    app_mode == AppOtbn;
+    en_app == 1'b1;
+    kmac_en == 1'b1;
+    hash_mode == sha3_pkg::CShake;
+    strength == sha3_pkg::L256;
+    xof_en == 1'b0;
+    output_len == kmac_pkg::AppDigestW / 8;
+    reg_en_sideload == 1'b1;
+    entropy_ready == 1'b1;
+  }
+
+  function void pre_randomize();
+    super.pre_randomize();
+    // Replace the parent's SHAKE-XOF configuration with dynamic KMAC's fixed-length settings.
+    // The shared hash_mode_c constraint contains an AppOtbn-specific branch permitting KMAC, so
+    // keep it enabled to retain the common mode consistency checks.
+    dynamic_app_mode_c.constraint_mode(0);
+  endfunction
+
+  virtual task pre_start();
+    super.pre_start();
+    cfg.require_valid_dynamic_kmac_rsp = 1'b1;
+  endtask
+
+  virtual task post_start();
+    cfg.require_valid_dynamic_kmac_rsp = 1'b0;
+    super.post_start();
+  endtask
+endclass
+
 // DA-002: run a complete OTBN session for each supported SHA3 strength. A single randomized
 // strength per test seed would not guarantee coverage of all four SHA3 configurations; iterate
 // deliberately while keeping the existing SHAKE/XOF smoke test unchanged.
