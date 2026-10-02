@@ -192,9 +192,23 @@
       reseed: 1
     }
     {
+      // DA-002 iterates SHA3-224/256/384/512 in one directed test run.
+      name: "{name}_app_dynamic_sha3"
+      uvm_test_seq: kmac_app_dynamic_sha3_vseq
+      run_opts: ["+test_timeout_ns=1_000_000_000"]
+      reseed: 1
+    }
+    {
       // DA-003 covers SHAKE and cSHAKE at both supported strengths with en_xof=0.
       name: "{name}_app_dynamic_shake_fixed"
       uvm_test_seq: kmac_app_dynamic_shake_fixed_vseq
+      run_opts: ["+test_timeout_ns=1_000_000_000"]
+      reseed: 1
+    }
+    {
+      // DA-004 checks cSHAKE PREFIX customization and fixed-rate digest prediction.
+      name: "{name}_app_dynamic_cshake"
+      uvm_test_seq: kmac_app_dynamic_cshake_vseq
       run_opts: ["+test_timeout_ns=1_000_000_000"]
       reseed: 1
     }
@@ -265,6 +279,14 @@
     {
       name: dynamic_app_fixed_output
       tests: ["{name}_app_dynamic_shake_fixed"]
+    }
+    {
+      name: dynamic_app_cshake
+      tests: ["{name}_app_dynamic_cshake"]
+    }
+    {
+      name: dynamic_app_sha3
+      tests: ["{name}_app_dynamic_sha3"]
     }
   ]
 }

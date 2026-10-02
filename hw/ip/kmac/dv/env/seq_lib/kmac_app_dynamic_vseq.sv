@@ -93,6 +93,72 @@ class kmac_app_dynamic_shake_fixed_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
+// DA-004: configure a non-empty cSHAKE customization string through PREFIX CSRs and verify the
+// fixed-rate result against the scoreboard's cSHAKE DPI prediction.
+class kmac_app_dynamic_cshake_vseq extends kmac_app_dynamic_vseq;
+  `uvm_object_utils(kmac_app_dynamic_cshake_vseq)
+  `uvm_object_new
+
+  sha3_pkg::keccak_strength_e test_strength = sha3_pkg::L128;
+
+  constraint num_trans_c {
+    num_trans == 1;
+  }
+
+  constraint cshake_fixed_mode_c {
+    app_mode == AppOtbn;
+    en_app == 1'b1;
+    kmac_en == 1'b0;
+    hash_mode == sha3_pkg::CShake;
+    strength == test_strength;
+    xof_en == 1'b0;
+    output_len == (test_strength == sha3_pkg::L128 ? 168 : 136);
+  }
+
+  // Exercise prefix serialization and decoding with a deterministic, non-empty customization.
+  // The inherited prefix-length constraint sizes the array to match this byte count.
+  constraint cshake_customization_c {
+    custom_str_len == 8;
+    custom_str_arr[0] == 8'd68; // D
+    custom_str_arr[1] == 8'd65; // A
+    custom_str_arr[2] == 8'd70; // F
+    custom_str_arr[3] == 8'd79; // O
+    custom_str_arr[4] == 8'd85; // U
+    custom_str_arr[5] == 8'd82; // R
+    custom_str_arr[6] == 8'd67; // C
+    custom_str_arr[7] == 8'd83; // S
+  }
+
+  function void pre_randomize();
+    super.pre_randomize();
+    // Replace the parent's SHAKE-XOF mode and the smoke sequence's empty customization string.
+    dynamic_app_mode_c.constraint_mode(0);
+    custom_str_len_c.constraint_mode(0);
+  endfunction
+
+  virtual task pre_start();
+    super.pre_start();
+    cfg.require_valid_dynamic_fixed_rsp = 1'b1;
+  endtask
+
+  virtual task body();
+    sha3_pkg::keccak_strength_e strengths[2] = '{sha3_pkg::L128, sha3_pkg::L256};
+
+    foreach (strengths[i]) begin
+      test_strength = strengths[i];
+      `uvm_info(`gfn, $sformatf("DA-004 dynamic cSHAKE-%0s, customization=DAFOURCS",
+                                test_strength.name()), UVM_LOW)
+      // The inherited smoke body randomizes and writes PREFIX before sending the OTBN request.
+      super.body();
+    end
+  endtask
+
+  virtual task post_start();
+    cfg.require_valid_dynamic_fixed_rsp = 1'b0;
+    super.post_start();
+  endtask
+endclass
+
 // DA-002: run a complete OTBN session for each supported SHA3 strength. A single randomized
 // strength per test seed would not guarantee coverage of all four SHA3 configurations; iterate
 // deliberately while keeping the existing SHAKE/XOF smoke test unchanged.

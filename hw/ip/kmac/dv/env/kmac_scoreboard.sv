@@ -774,10 +774,10 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
               !(dynamic_session_cfg.mode inside {kmac_pkg::AppShake, kmac_pkg::AppCShake}) ||
               dynamic_session_cfg.en_xof || !do_check_digest) begin
             `uvm_fatal(get_full_name(),
-                       "DA-003 did not complete a checked fixed-output SHAKE/cSHAKE session")
+                       "Fixed-output dynamic test did not complete a checked SHAKE/cSHAKE session")
           end
           if (dynamic_rsp_error) begin
-            `uvm_fatal(get_full_name(), "DA-003 received an error instead of a fixed digest")
+            `uvm_fatal(get_full_name(), "Fixed-output dynamic test received an error response")
           end
         end
         if (dynamic_cfg_valid && dynamic_session_cfg.mode == kmac_pkg::AppSHA3 &&
