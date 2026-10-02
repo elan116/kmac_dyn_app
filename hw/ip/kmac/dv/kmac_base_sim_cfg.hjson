@@ -192,6 +192,13 @@
       reseed: 1
     }
     {
+      // DA-003 covers SHAKE and cSHAKE at both supported strengths with en_xof=0.
+      name: "{name}_app_dynamic_shake_fixed"
+      uvm_test_seq: kmac_app_dynamic_shake_fixed_vseq
+      run_opts: ["+test_timeout_ns=1_000_000_000"]
+      reseed: 1
+    }
+    {
       name: "{name}_app_with_partial_data"
       uvm_test_seq: kmac_app_with_partial_data_vseq
       run_opts: ["+test_timeout_ns=500_000_000"]
@@ -254,6 +261,10 @@
     {
       name: smoke
       tests: ["{name}_smoke"]
+    }
+    {
+      name: dynamic_app_fixed_output
+      tests: ["{name}_app_dynamic_shake_fixed"]
     }
   ]
 }

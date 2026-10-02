@@ -769,6 +769,17 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
             `uvm_fatal(get_full_name(), "DA-002 received an error instead of a dynamic SHA3 digest")
           end
         end
+        if (cfg.require_valid_dynamic_fixed_rsp) begin
+          if (!dynamic_cfg_valid ||
+              !(dynamic_session_cfg.mode inside {kmac_pkg::AppShake, kmac_pkg::AppCShake}) ||
+              dynamic_session_cfg.en_xof || !do_check_digest) begin
+            `uvm_fatal(get_full_name(),
+                       "DA-003 did not complete a checked fixed-output SHAKE/cSHAKE session")
+          end
+          if (dynamic_rsp_error) begin
+            `uvm_fatal(get_full_name(), "DA-003 received an error instead of a fixed digest")
+          end
+        end
         if (dynamic_cfg_valid && dynamic_session_cfg.mode == kmac_pkg::AppSHA3 &&
             !dynamic_rsp_error && do_check_digest) begin
           int unsigned expected_beats;
@@ -780,6 +791,22 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
           endcase
           // SHA3-224 transports 32 bytes, although only 28 bytes form the hash. Comparing just
           // the digest would not catch a lost/extra beat, so check both complete share streams.
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(),
+                             expected_beats * (kmac_pkg::DynAppDigestW / 8))
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share1.size(),
+                             expected_beats * (kmac_pkg::DynAppDigestW / 8))
+        end
+        if (dynamic_cfg_valid &&
+            dynamic_session_cfg.mode inside {kmac_pkg::AppShake, kmac_pkg::AppCShake} &&
+            !dynamic_session_cfg.en_xof && !dynamic_rsp_error && do_check_digest) begin
+          int unsigned expected_beats;
+          case (dynamic_session_cfg.kstrength)
+            sha3_pkg::L128: expected_beats = 21;
+            sha3_pkg::L256: expected_beats = 17;
+            default: `uvm_fatal(get_full_name(), "Invalid fixed dynamic SHAKE/cSHAKE strength")
+          endcase
+          // Fixed-output SHAKE/cSHAKE returns one full rate when en_xof=0. Check the expected
+          // transport length explicitly rather than deriving output length only from what arrived.
           `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(),
                              expected_beats * (kmac_pkg::DynAppDigestW / 8))
           `DV_CHECK_EQ_FATAL(dynamic_digest_share1.size(),

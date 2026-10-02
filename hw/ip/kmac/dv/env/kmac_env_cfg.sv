@@ -36,6 +36,9 @@ class kmac_env_cfg extends cip_base_env_cfg #(.RAL_T(kmac_reg_block));
   // other dynamic tests that intentionally exercise application error responses.
   bit require_valid_dynamic_sha3_rsp = 0;
 
+  // DA-003 requires fixed-output SHAKE/cSHAKE to complete with a checked digest and no app error.
+  bit require_valid_dynamic_fixed_rsp = 0;
+
   // These values are used by the test vector tests to select the correct vector text files.
   // These are unused by all other tests.
   int sha3_variant;
