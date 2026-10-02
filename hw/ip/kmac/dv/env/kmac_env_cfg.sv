@@ -32,6 +32,10 @@ class kmac_env_cfg extends cip_base_env_cfg #(.RAL_T(kmac_reg_block));
   // Tracks if a sha3 sw control error is expected to occur.
   bit expect_sha3_sw_ctrl_err = 0;
 
+  // DA-002 requires every dynamic SHA3 session to return a valid digest. Keep this disabled for
+  // other dynamic tests that intentionally exercise application error responses.
+  bit require_valid_dynamic_sha3_rsp = 0;
+
   // These values are used by the test vector tests to select the correct vector text files.
   // These are unused by all other tests.
   int sha3_variant;

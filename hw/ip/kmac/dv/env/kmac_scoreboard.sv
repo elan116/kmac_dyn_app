@@ -760,6 +760,31 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       if (item.m_finish) begin
         // finish is the session boundary, not a digest chunk. Check all accumulated output before
         // clearing the message/config state used by the DPI model.
+        if (cfg.require_valid_dynamic_sha3_rsp) begin
+          if (!dynamic_cfg_valid || dynamic_session_cfg.mode != kmac_pkg::AppSHA3 ||
+              dynamic_session_cfg.en_xof || !do_check_digest) begin
+            `uvm_fatal(get_full_name(), "DA-002 did not complete a checked non-XOF SHA3 session")
+          end
+          if (dynamic_rsp_error) begin
+            `uvm_fatal(get_full_name(), "DA-002 received an error instead of a dynamic SHA3 digest")
+          end
+        end
+        if (dynamic_cfg_valid && dynamic_session_cfg.mode == kmac_pkg::AppSHA3 &&
+            !dynamic_rsp_error && do_check_digest) begin
+          int unsigned expected_beats;
+          case (dynamic_session_cfg.kstrength)
+            sha3_pkg::L224, sha3_pkg::L256: expected_beats = 4;
+            sha3_pkg::L384: expected_beats = 6;
+            sha3_pkg::L512: expected_beats = 8;
+            default: `uvm_fatal(get_full_name(), "Invalid dynamic SHA3 strength")
+          endcase
+          // SHA3-224 transports 32 bytes, although only 28 bytes form the hash. Comparing just
+          // the digest would not catch a lost/extra beat, so check both complete share streams.
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(),
+                             expected_beats * (kmac_pkg::DynAppDigestW / 8))
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share1.size(),
+                             expected_beats * (kmac_pkg::DynAppDigestW / 8))
+        end
         if (!dynamic_rsp_error && do_check_digest) check_digest();
         in_kmac_app = 0;
         sha3_squeeze = 0;
