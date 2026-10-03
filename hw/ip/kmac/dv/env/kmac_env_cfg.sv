@@ -45,6 +45,9 @@ class kmac_env_cfg extends cip_base_env_cfg #(.RAL_T(kmac_reg_block));
   // DA-007 requires each OTBN message to have one full beat followed by a partial req_last beat.
   bit require_dynamic_partial_msg = 0;
 
+  // DA-008 requires a zero-byte final message request after dynamic session configuration.
+  bit require_dynamic_empty_msg = 0;
+
   // These values are used by the test vector tests to select the correct vector text files.
   // These are unused by all other tests.
   int sha3_variant;

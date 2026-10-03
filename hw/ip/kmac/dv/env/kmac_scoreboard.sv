@@ -619,6 +619,13 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
         end else if (!dynamic_msg_complete) begin
           // Dynamic OTBN is configured as masked in the app table, so recover the logical message
           // byte by XORing the two request shares. m_last here marks the end of message absorption.
+          if (cfg.require_dynamic_empty_msg) begin
+            // DA-008 sends the message-ending empty beat immediately after configuration. The
+            // separate empty termination request is sent only after digest output is consumed.
+            `DV_CHECK_EQ_FATAL(dynamic_msg_beats_seen, 0)
+            `DV_CHECK_EQ_FATAL(item.m_num_bytes, 0)
+            `DV_CHECK_EQ_FATAL(item.m_last, 1)
+          end
           if (cfg.require_dynamic_partial_msg) begin
             if (item.m_last) begin
               // Each directed message has one full beat and a non-empty partial final beat.
@@ -639,7 +646,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
         end else if (item.m_last) begin
           // A later req_last, after message completion, is the dynamic session termination request;
           // its zero strobe means it contributes no additional message bytes.
-          if (cfg.require_dynamic_partial_msg) begin
+          if (cfg.require_dynamic_partial_msg || cfg.require_dynamic_empty_msg) begin
             `DV_CHECK_EQ_FATAL(item.m_num_bytes, 0)
           end
           dynamic_termination_seen = 1'b1;
@@ -782,6 +789,18 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
         end
         if (cfg.require_dynamic_partial_msg) begin
           `DV_CHECK_EQ_FATAL(dynamic_msg_beats_seen, 2)
+        end
+        if (cfg.require_dynamic_empty_msg) begin
+          if (!dynamic_msg_complete || !dynamic_termination_seen || !dynamic_cfg_valid ||
+              dynamic_session_cfg.mode != kmac_pkg::AppShake ||
+              !dynamic_session_cfg.en_xof || !do_check_digest) begin
+            `uvm_fatal(get_full_name(),
+                       "DA-008 did not complete a checked SHAKE-XOF empty-message session")
+          end
+          if (dynamic_rsp_error) begin
+            `uvm_fatal(get_full_name(), "DA-008 received an error instead of a SHAKE digest")
+          end
+          `DV_CHECK_EQ_FATAL(dynamic_msg_beats_seen, 1)
         end
         // finish is the session boundary, not a digest chunk. Check all accumulated output before
         // clearing the message/config state used by the DPI model.
