@@ -621,10 +621,11 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
           // byte by XORing the two request shares. m_last here marks the end of message absorption.
           if (cfg.require_dynamic_partial_msg) begin
             if (item.m_last) begin
-              // The directed 13-byte message is exactly one full beat and a five-byte final beat.
+              // Each directed message has one full beat and a non-empty partial final beat.
               // m_num_bytes was decoded from the observed request strobe by the monitor.
               `DV_CHECK_EQ_FATAL(dynamic_msg_beats_seen, 1)
-              `DV_CHECK_EQ_FATAL(item.m_num_bytes, 5)
+              `DV_CHECK_GT_FATAL(item.m_num_bytes, 0)
+              `DV_CHECK_LT_FATAL(item.m_num_bytes, kmac_pkg::MsgWidth / 8)
             end else begin
               `DV_CHECK_EQ_FATAL(item.m_num_bytes, kmac_pkg::MsgWidth / 8)
             end

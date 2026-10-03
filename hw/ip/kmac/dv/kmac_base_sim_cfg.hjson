@@ -220,7 +220,7 @@
       reseed: 1
     }
     {
-      // DA-007 sends a full message beat followed by a partial final beat and checks strobes.
+      // DA-007 runs seven messages to cover each partial final-beat strobe after a full beat.
       name: "{name}_app_dynamic_partial_msg"
       uvm_test_seq: kmac_app_dynamic_partial_msg_vseq
       run_opts: ["+test_timeout_ns=1_000_000_000"]

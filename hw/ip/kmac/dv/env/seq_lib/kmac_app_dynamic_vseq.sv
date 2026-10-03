@@ -199,10 +199,13 @@ class kmac_app_dynamic_kmac_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
-// DA-007: send one complete request beat followed by a partial final message beat.
+// DA-007: sweep every partial final-beat strobe across separate dynamic messages.
 class kmac_app_dynamic_partial_msg_vseq extends kmac_app_dynamic_vseq;
   `uvm_object_utils(kmac_app_dynamic_partial_msg_vseq)
   `uvm_object_new
+
+  // Set before each inherited smoke transaction to cover every non-zero partial strobe.
+  int unsigned partial_bytes = 1;
 
   constraint num_trans_c {
     num_trans == 1;
@@ -216,8 +219,8 @@ class kmac_app_dynamic_partial_msg_vseq extends kmac_app_dynamic_vseq;
     strength == sha3_pkg::L256;
     xof_en == 1'b1;
     output_len == 16;
-    // MsgWidth is 64 bits / 8 bytes: 13 bytes creates one full beat and a 5-byte final beat.
-    msg.size() == (kmac_pkg::MsgWidth / 8) + 5;
+    // Each message has one full beat followed by a 1-7-byte partial final beat.
+    msg.size() == (kmac_pkg::MsgWidth / 8) + partial_bytes;
   }
 
   function void pre_randomize();
@@ -228,6 +231,16 @@ class kmac_app_dynamic_partial_msg_vseq extends kmac_app_dynamic_vseq;
   virtual task pre_start();
     super.pre_start();
     cfg.require_dynamic_partial_msg = 1'b1;
+  endtask
+
+  virtual task body();
+    for (int unsigned tail_bytes = 1; tail_bytes < kmac_pkg::MsgWidth / 8; tail_bytes++) begin
+      partial_bytes = tail_bytes;
+      `uvm_info(`gfn, $sformatf("DA-007 dynamic message with %0d-byte final beat", tail_bytes),
+                UVM_LOW)
+      // num_trans is fixed to one; each call runs and finishes a distinct dynamic session.
+      super.body();
+    end
   endtask
 
   virtual task post_start();
