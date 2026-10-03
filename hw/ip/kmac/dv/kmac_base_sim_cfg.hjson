@@ -234,6 +234,13 @@
       reseed: 1
     }
     {
+      // DA-009 selects two full SHAKE-256 rates plus one response beat, then checks finish.
+      name: "{name}_app_dynamic_xof_stream"
+      uvm_test_seq: kmac_app_dynamic_xof_stream_vseq
+      run_opts: ["+test_timeout_ns=1_000_000_000"]
+      reseed: 1
+    }
+    {
       name: "{name}_app_with_partial_data"
       uvm_test_seq: kmac_app_with_partial_data_vseq
       run_opts: ["+test_timeout_ns=500_000_000"]
@@ -320,6 +327,10 @@
     {
       name: dynamic_app_empty_msg
       tests: ["{name}_app_dynamic_empty_msg"]
+    }
+    {
+      name: dynamic_app_xof_stream
+      tests: ["{name}_app_dynamic_xof_stream"]
     }
   ]
 }

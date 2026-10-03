@@ -802,6 +802,39 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
           end
           `DV_CHECK_EQ_FATAL(dynamic_msg_beats_seen, 1)
         end
+        if (cfg.require_dynamic_xof_stream) begin
+          int unsigned response_beats;
+          int unsigned max_response_beats;
+          int unsigned bytes_per_response = kmac_pkg::DynAppDigestW / 8;
+
+          if (!dynamic_msg_complete || !dynamic_termination_seen || !dynamic_cfg_valid ||
+              dynamic_session_cfg.mode != kmac_pkg::AppShake ||
+              dynamic_session_cfg.kstrength != sha3_pkg::L256 ||
+              !dynamic_session_cfg.en_xof || !do_check_digest) begin
+            `uvm_fatal(get_full_name(),
+                       "DA-009 did not complete the checked SHAKE-256 XOF session framing")
+          end
+          if (dynamic_rsp_error) begin
+            `uvm_fatal(get_full_name(), "DA-009 received an error instead of an XOF stream")
+          end
+          `DV_CHECK_GT_FATAL(cfg.expected_dynamic_xof_response_beats, 17)
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(), dynamic_digest_share1.size())
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size() % bytes_per_response, 0)
+          response_beats = dynamic_digest_share0.size() / bytes_per_response;
+          // The host issues termination only after consuming the selected number of beats. More
+          // responses can handshake during the termination request's configured delay and while
+          // the request traverses the sequencer/driver. Require the selection threshold, then
+          // bound overshoot so the test still proves finite output termination.
+          max_response_beats = cfg.expected_dynamic_xof_response_beats +
+                               cfg.m_kmac_app_agent_cfg[AppOtbn].req_delay_max + 4;
+          if (response_beats < cfg.expected_dynamic_xof_response_beats ||
+              response_beats > max_response_beats) begin
+            `uvm_fatal(get_full_name(),
+                       $sformatf("DA-009 observed %0d response beats; expected between %0d and %0d",
+                                 response_beats, cfg.expected_dynamic_xof_response_beats,
+                                 max_response_beats))
+          end
+        end
         // finish is the session boundary, not a digest chunk. Check all accumulated output before
         // clearing the message/config state used by the DPI model.
         if (cfg.require_valid_dynamic_sha3_rsp) begin

@@ -287,6 +287,47 @@ class kmac_app_dynamic_empty_msg_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
+// DA-009: consume a finite XOF stream spanning multiple complete digest rates, then finish.
+class kmac_app_dynamic_xof_stream_vseq extends kmac_app_dynamic_vseq;
+  `uvm_object_utils(kmac_app_dynamic_xof_stream_vseq)
+  `uvm_object_new
+
+  localparam int unsigned Shake256ResponseBeatsPerRate = 136 / (kmac_pkg::DynAppDigestW / 8);
+  localparam int unsigned SelectedXofResponseBeats = 2 * Shake256ResponseBeatsPerRate + 1;
+
+  constraint num_trans_c {
+    num_trans == 1;
+  }
+
+  constraint dynamic_xof_stream_c {
+    app_mode == AppOtbn;
+    en_app == 1'b1;
+    kmac_en == 1'b0;
+    hash_mode == sha3_pkg::Shake;
+    strength == sha3_pkg::L256;
+    xof_en == 1'b1;
+    output_len == 16;
+  }
+
+  function void pre_randomize();
+    super.pre_randomize();
+    dynamic_app_mode_c.constraint_mode(0);
+  endfunction
+
+  virtual task pre_start();
+    super.pre_start();
+    dynamic_xof_response_beats = SelectedXofResponseBeats;
+    cfg.require_dynamic_xof_stream = 1'b1;
+    cfg.expected_dynamic_xof_response_beats = SelectedXofResponseBeats;
+  endtask
+
+  virtual task post_start();
+    cfg.require_dynamic_xof_stream = 1'b0;
+    cfg.expected_dynamic_xof_response_beats = 0;
+    super.post_start();
+  endtask
+endclass
+
 // DA-002: run a complete OTBN session for each supported SHA3 strength. A single randomized
 // strength per test seed would not guarantee coverage of all four SHA3 configurations; iterate
 // deliberately while keeping the existing SHAKE/XOF smoke test unchanged.

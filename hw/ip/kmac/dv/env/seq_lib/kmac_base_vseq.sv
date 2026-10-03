@@ -83,6 +83,10 @@ class kmac_base_vseq extends cip_base_vseq #(
   // output length in bytes.
   rand int unsigned output_len;
 
+  // Number of dynamic XOF response beats to consume before sending the termination request.
+  // Existing dynamic tests retain the host sequence default unless they override this value.
+  int unsigned dynamic_xof_response_beats = 2;
+
   // Keccak block size - used only for variable-length output functions.
   // strength128 -> 168
   // strength256 -> 136
@@ -599,6 +603,7 @@ class kmac_base_vseq extends cip_base_vseq #(
 
       dynamic_seq = kmac_app_dynamic_host_seq::type_id::create("dynamic_seq");
       dynamic_seq.session_cfg = dynamic_cfg;
+      dynamic_seq.xof_chunks_before_terminate = dynamic_xof_response_beats;
       // The dynamic sequence sends the configuration before these message bytes and then owns the
       // response-drain/termination handshake. The static sequence path below remains unchanged.
       dynamic_seq.msg_size_bytes = msg.size();
