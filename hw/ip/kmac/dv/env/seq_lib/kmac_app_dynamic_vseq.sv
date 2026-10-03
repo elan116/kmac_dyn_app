@@ -199,6 +199,43 @@ class kmac_app_dynamic_kmac_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
+// DA-007: send one complete request beat followed by a partial final message beat.
+class kmac_app_dynamic_partial_msg_vseq extends kmac_app_dynamic_vseq;
+  `uvm_object_utils(kmac_app_dynamic_partial_msg_vseq)
+  `uvm_object_new
+
+  constraint num_trans_c {
+    num_trans == 1;
+  }
+
+  constraint partial_dynamic_msg_c {
+    app_mode == AppOtbn;
+    en_app == 1'b1;
+    kmac_en == 1'b0;
+    hash_mode == sha3_pkg::Shake;
+    strength == sha3_pkg::L256;
+    xof_en == 1'b1;
+    output_len == 16;
+    // MsgWidth is 64 bits / 8 bytes: 13 bytes creates one full beat and a 5-byte final beat.
+    msg.size() == (kmac_pkg::MsgWidth / 8) + 5;
+  }
+
+  function void pre_randomize();
+    super.pre_randomize();
+    dynamic_app_mode_c.constraint_mode(0);
+  endfunction
+
+  virtual task pre_start();
+    super.pre_start();
+    cfg.require_dynamic_partial_msg = 1'b1;
+  endtask
+
+  virtual task post_start();
+    cfg.require_dynamic_partial_msg = 1'b0;
+    super.post_start();
+  endtask
+endclass
+
 // DA-002: run a complete OTBN session for each supported SHA3 strength. A single randomized
 // strength per test seed would not guarantee coverage of all four SHA3 configurations; iterate
 // deliberately while keeping the existing SHAKE/XOF smoke test unchanged.

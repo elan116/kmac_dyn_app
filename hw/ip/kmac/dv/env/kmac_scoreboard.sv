@@ -123,6 +123,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
   bit dynamic_cfg_valid;
   bit dynamic_cfg_req_seen;
   bit dynamic_msg_complete;
+  int unsigned dynamic_msg_beats_seen;
   bit dynamic_termination_seen;
   bit dynamic_rsp_error;
   // The active session temporarily overrides software-selected mode fields. Save them so CSR-mode
@@ -432,6 +433,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     dynamic_cfg_valid = 1'b1;
     dynamic_cfg_req_seen = 1'b0;
     dynamic_msg_complete = 1'b0;
+    dynamic_msg_beats_seen = 0;
     dynamic_termination_seen = 1'b0;
     dynamic_rsp_error = 1'b0;
     dynamic_digest_share0.delete();
@@ -617,14 +619,28 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
         end else if (!dynamic_msg_complete) begin
           // Dynamic OTBN is configured as masked in the app table, so recover the logical message
           // byte by XORing the two request shares. m_last here marks the end of message absorption.
+          if (cfg.require_dynamic_partial_msg) begin
+            if (item.m_last) begin
+              // The directed 13-byte message is exactly one full beat and a five-byte final beat.
+              // m_num_bytes was decoded from the observed request strobe by the monitor.
+              `DV_CHECK_EQ_FATAL(dynamic_msg_beats_seen, 1)
+              `DV_CHECK_EQ_FATAL(item.m_num_bytes, 5)
+            end else begin
+              `DV_CHECK_EQ_FATAL(item.m_num_bytes, kmac_pkg::MsgWidth / 8)
+            end
+          end
           for (int byte_idx = 0; byte_idx < item.m_num_bytes; byte_idx++) begin
             kmac_app_msg.push_back(((item.m_data_s0 >> (byte_idx * 8)) & 8'hff) ^
                                    ((item.m_data_s1 >> (byte_idx * 8)) & 8'hff));
           end
+          dynamic_msg_beats_seen++;
           if (item.m_last) dynamic_msg_complete = 1'b1;
         end else if (item.m_last) begin
           // A later req_last, after message completion, is the dynamic session termination request;
           // its zero strobe means it contributes no additional message bytes.
+          if (cfg.require_dynamic_partial_msg) begin
+            `DV_CHECK_EQ_FATAL(item.m_num_bytes, 0)
+          end
           dynamic_termination_seen = 1'b1;
         end
       end else begin
@@ -758,6 +774,14 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       end
 
       if (item.m_finish) begin
+        if (cfg.require_dynamic_partial_msg &&
+            (!dynamic_msg_complete || !dynamic_termination_seen)) begin
+          `uvm_fatal(get_full_name(),
+                     "DA-007 did not complete partial message and explicit termination framing")
+        end
+        if (cfg.require_dynamic_partial_msg) begin
+          `DV_CHECK_EQ_FATAL(dynamic_msg_beats_seen, 2)
+        end
         // finish is the session boundary, not a digest chunk. Check all accumulated output before
         // clearing the message/config state used by the DPI model.
         if (cfg.require_valid_dynamic_sha3_rsp) begin

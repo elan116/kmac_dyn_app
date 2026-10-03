@@ -42,6 +42,9 @@ class kmac_env_cfg extends cip_base_env_cfg #(.RAL_T(kmac_reg_block));
   // DA-005 requires dynamic KMAC to use its sideload key and return a checked fixed-length digest.
   bit require_valid_dynamic_kmac_rsp = 0;
 
+  // DA-007 requires multiple full OTBN message beats followed by a partial req_last beat.
+  bit require_dynamic_partial_msg = 0;
+
   // These values are used by the test vector tests to select the correct vector text files.
   // These are unused by all other tests.
   int sha3_variant;
