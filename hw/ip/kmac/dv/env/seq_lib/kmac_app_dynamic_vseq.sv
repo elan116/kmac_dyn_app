@@ -328,6 +328,43 @@ class kmac_app_dynamic_xof_stream_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
+// DA-012: the DUT must reject SHA3-256 with XOF enabled, then complete error/finish framing.
+class kmac_app_dynamic_invalid_cfg_vseq extends kmac_app_dynamic_vseq;
+  `uvm_object_utils(kmac_app_dynamic_invalid_cfg_vseq)
+  `uvm_object_new
+
+  constraint num_trans_c {
+    num_trans == 1;
+  }
+
+  constraint invalid_dynamic_cfg_c {
+    app_mode == AppOtbn;
+    en_app == 1'b1;
+    kmac_en == 1'b0;
+    hash_mode == sha3_pkg::Sha3;
+    strength == sha3_pkg::L256;
+    xof_en == 1'b1;
+    // Keep the software-side output length legal for SHA3-256; the invalid field is en_xof.
+    output_len == 32;
+    msg.size() == 13;
+  }
+
+  function void pre_randomize();
+    super.pre_randomize();
+    dynamic_app_mode_c.constraint_mode(0);
+  endfunction
+
+  virtual task pre_start();
+    super.pre_start();
+    cfg.require_dynamic_invalid_cfg = 1'b1;
+  endtask
+
+  virtual task post_start();
+    cfg.require_dynamic_invalid_cfg = 1'b0;
+    super.post_start();
+  endtask
+endclass
+
 // DA-002: run a complete OTBN session for each supported SHA3 strength. A single randomized
 // strength per test seed would not guarantee coverage of all four SHA3 configurations; iterate
 // deliberately while keeping the existing SHAKE/XOF smoke test unchanged.

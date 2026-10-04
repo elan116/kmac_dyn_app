@@ -52,6 +52,9 @@ class kmac_env_cfg extends cip_base_env_cfg #(.RAL_T(kmac_reg_block));
   bit require_dynamic_xof_stream = 0;
   int unsigned expected_dynamic_xof_response_beats = 0;
 
+  // DA-012 deliberately sends an invalid dynamic mode/strength/XOF configuration.
+  bit require_dynamic_invalid_cfg = 0;
+
   // These values are used by the test vector tests to select the correct vector text files.
   // These are unused by all other tests.
   int sha3_variant;

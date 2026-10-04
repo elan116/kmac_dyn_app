@@ -19,6 +19,8 @@ class kmac_app_dynamic_host_seq extends dv_base_seq #(.REQ         (kmac_app_req
   int unsigned msg_size_bytes = 1;
   // For XOF runs, consume this many response beats before asking the DUT to stop squeezing.
   int unsigned xof_chunks_before_terminate = 2;
+  // Set only by a directed negative test that expects the DUT to reject its session config.
+  bit expect_invalid_config = 0;
 
   extern function new(string name = "");
   extern virtual task body();
@@ -43,12 +45,14 @@ task kmac_app_dynamic_host_seq::body();
 
   // Reject unsupported request combinations early; the DUT reports these as service errors, but
   // this sequence currently models only valid dynamic sessions.
-  if (session_cfg.en_xof && !(session_cfg.mode inside {kmac_pkg::AppShake,
-                                                      kmac_pkg::AppCShake})) begin
-    `uvm_fatal(get_full_name(), "Dynamic XOF is only supported for SHAKE/cSHAKE sessions")
-  end
-  if ((session_cfg.mode inside {kmac_pkg::AppSHA3, kmac_pkg::AppKMAC}) && session_cfg.en_xof) begin
-    `uvm_fatal(get_full_name(), "SHA3 and KMAC sessions must have en_xof=0")
+  if (!expect_invalid_config) begin
+    if (session_cfg.en_xof && !(session_cfg.mode inside {kmac_pkg::AppShake,
+                                                        kmac_pkg::AppCShake})) begin
+      `uvm_fatal(get_full_name(), "Dynamic XOF is only supported for SHAKE/cSHAKE sessions")
+    end
+    if ((session_cfg.mode inside {kmac_pkg::AppSHA3, kmac_pkg::AppKMAC}) && session_cfg.en_xof) begin
+      `uvm_fatal(get_full_name(), "SHA3 and KMAC sessions must have en_xof=0")
+    end
   end
 
   // RTL interprets the first OTBN request's low data_s0 bits as app_ses_config_t. Its strobe must

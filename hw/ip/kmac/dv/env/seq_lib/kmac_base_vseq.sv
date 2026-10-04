@@ -598,12 +598,15 @@ class kmac_base_vseq extends cip_base_vseq #(
         endcase
       end
       // Vseq xof_en also covers SW KMAC-XOF, which the dynamic app interface does not allow.
-      dynamic_cfg.en_xof = xof_en && (dynamic_cfg.mode inside {kmac_pkg::AppShake,
-                                                               kmac_pkg::AppCShake});
+      // DA-012 opts in to transmitting an invalid SHA3+XOF config so the DUT can report the error.
+      dynamic_cfg.en_xof = cfg.require_dynamic_invalid_cfg ? xof_en :
+               xof_en && (dynamic_cfg.mode inside {kmac_pkg::AppShake,
+                           kmac_pkg::AppCShake});
 
       dynamic_seq = kmac_app_dynamic_host_seq::type_id::create("dynamic_seq");
       dynamic_seq.session_cfg = dynamic_cfg;
       dynamic_seq.xof_chunks_before_terminate = dynamic_xof_response_beats;
+      dynamic_seq.expect_invalid_config = cfg.require_dynamic_invalid_cfg;
       // The dynamic sequence sends the configuration before these message bytes and then owns the
       // response-drain/termination handshake. The static sequence path below remains unchanged.
       dynamic_seq.msg_size_bytes = msg.size();

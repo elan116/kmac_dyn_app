@@ -126,6 +126,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
   int unsigned dynamic_msg_beats_seen;
   bit dynamic_termination_seen;
   bit dynamic_rsp_error;
+  int unsigned dynamic_error_rsp_count;
   // The active session temporarily overrides software-selected mode fields. Save them so CSR-mode
   // checking resumes with the pre-session values once OTBN finishes.
   bit dynamic_prev_kmac_en;
@@ -436,6 +437,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     dynamic_msg_beats_seen = 0;
     dynamic_termination_seen = 1'b0;
     dynamic_rsp_error = 1'b0;
+    dynamic_error_rsp_count = 0;
     dynamic_digest_share0.delete();
     dynamic_digest_share1.delete();
     strength = dynamic_session_cfg.kstrength;
@@ -772,7 +774,10 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
 
       // Errors can be reported on an ordinary digest beat or deferred to finish. Remember any
       // error so the complete output is not compared as if it were a valid digest.
-      if (item.m_error) dynamic_rsp_error = 1'b1;
+      if (item.m_error) begin
+        dynamic_rsp_error = 1'b1;
+        if (!item.m_finish) dynamic_error_rsp_count++;
+      end
       if (!item.m_finish && !item.m_error) begin
         // DynAppDigestW is 64 bits for this IP, so each response contributes eight bytes per share.
         for (int byte_idx = 0; byte_idx < kmac_pkg::DynAppDigestW / 8; byte_idx++) begin
@@ -833,6 +838,21 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
                        $sformatf("DA-009 observed %0d response beats; expected between %0d and %0d",
                                  response_beats, cfg.expected_dynamic_xof_response_beats,
                                  max_response_beats))
+          end
+        end
+        if (cfg.require_dynamic_invalid_cfg) begin
+          if (!dynamic_cfg_valid || dynamic_session_cfg.mode != kmac_pkg::AppSHA3 ||
+              dynamic_session_cfg.kstrength != sha3_pkg::L256 ||
+              !dynamic_session_cfg.en_xof || !dynamic_msg_complete ||
+              !dynamic_termination_seen) begin
+            `uvm_fatal(get_full_name(),
+                       "DA-012 did not exercise invalid SHA3-256+XOF config through termination")
+          end
+          `DV_CHECK_EQ_FATAL(dynamic_error_rsp_count, 1)
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(), 0)
+          `DV_CHECK_EQ_FATAL(dynamic_digest_share1.size(), 0)
+          if (item.m_error) begin
+            `uvm_fatal(get_full_name(), "DA-012 finish response unexpectedly reported an error")
           end
         end
         // finish is the session boundary, not a digest chunk. Check all accumulated output before
@@ -1707,6 +1727,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     dynamic_msg_complete = 0;
     dynamic_termination_seen = 0;
     dynamic_rsp_error = 0;
+    dynamic_error_rsp_count = 0;
     dynamic_digest_share0.delete();
     dynamic_digest_share1.delete();
   endfunction
