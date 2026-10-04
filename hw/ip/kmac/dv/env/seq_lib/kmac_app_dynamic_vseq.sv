@@ -8,6 +8,12 @@ class kmac_app_dynamic_vseq extends kmac_app_vseq;
   `uvm_object_utils(kmac_app_dynamic_vseq)
   `uvm_object_new
 
+  // Keep the count fixed because the inherited smoke body randomizes this on every iteration.
+  // Sweep subclasses override this to one transaction per selected configuration.
+  constraint num_trans_c {
+    num_trans == 5;
+  }
+
   constraint dynamic_app_mode_c {
     // Keep this first dynamic regression directed: OTBN, SHAKE, and a known XOF mode exercise the
     // config-first protocol and termination path without adding key/prefix variability.
@@ -169,7 +175,8 @@ class kmac_app_dynamic_kmac_vseq extends kmac_app_dynamic_vseq;
   `uvm_object_new
 
   constraint num_trans_c {
-    num_trans == 1;
+    // Five independent messages, each with fresh randomized setup and a complete finish.
+    num_trans == 5;
   }
 
   constraint dynamic_kmac_mode_c {
@@ -258,7 +265,8 @@ class kmac_app_dynamic_empty_msg_vseq extends kmac_app_dynamic_vseq;
   `uvm_object_new
 
   constraint num_trans_c {
-    num_trans == 1;
+    // Repeat the zero-length message in five separately configured and terminated sessions.
+    num_trans == 5;
   }
 
   constraint empty_dynamic_msg_c {
@@ -299,7 +307,8 @@ class kmac_app_dynamic_xof_stream_vseq extends kmac_app_dynamic_vseq;
   localparam int unsigned SelectedXofResponseBeats = 2 * Shake256ResponseBeatsPerRate + 1;
 
   constraint num_trans_c {
-    num_trans == 1;
+    // Each of the five messages consumes its own multi-rate XOF stream through finish.
+    num_trans == 5;
   }
 
   constraint dynamic_xof_stream_c {

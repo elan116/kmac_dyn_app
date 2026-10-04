@@ -114,7 +114,8 @@
     {
       name: app_dynamic
       desc: '''
-            Exercise the dynamic OTBN application interface with a runtime SHAKE configuration.
+            Exercise five complete message sessions on the dynamic OTBN application interface
+            with runtime SHAKE configurations in each test run.
             The host sends the packed session configuration as the first request, absorbs the
             message with its own final req_last, accepts a finite number of XOF digest chunks,
             sends a second zero-strobe req_last to terminate squeezing, and drains any pipelined

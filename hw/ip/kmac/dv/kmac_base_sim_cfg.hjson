@@ -186,8 +186,7 @@
     {
       name: "{name}_app_dynamic"
       uvm_test_seq: kmac_app_dynamic_vseq
-      // Single directed seed isolates protocol bring-up; broaden reseeding after dynamic modes are
-      // covered by the scoreboard and response-stream checks.
+      // Five complete SHAKE-XOF message sessions per seed; one seed for directed bring-up.
       run_opts: ["+test_timeout_ns=500_000_000"]
       reseed: 1
     }
@@ -213,7 +212,7 @@
       reseed: 1
     }
     {
-      // DA-005 checks dynamic KMAC mode, sideload-key usage, fixed prefix and digest prediction.
+      // DA-005 runs five KMAC messages with sideload-key, fixed-prefix and digest checks.
       name: "{name}_app_dynamic_kmac"
       uvm_test_seq: kmac_app_dynamic_kmac_vseq
       run_opts: ["+test_timeout_ns=1_000_000_000"]
@@ -227,14 +226,14 @@
       reseed: 1
     }
     {
-      // DA-008 sends the session configuration followed by an empty final message beat.
+      // DA-008 runs five empty-message sessions, each with separate config and termination.
       name: "{name}_app_dynamic_empty_msg"
       uvm_test_seq: kmac_app_dynamic_empty_msg_vseq
       run_opts: ["+test_timeout_ns=1_000_000_000"]
       reseed: 1
     }
     {
-      // DA-009 selects two full SHAKE-256 rates plus one response beat, then checks finish.
+      // DA-009 runs five messages, each selecting two SHAKE-256 rates plus one beat and finish.
       name: "{name}_app_dynamic_xof_stream"
       uvm_test_seq: kmac_app_dynamic_xof_stream_vseq
       run_opts: ["+test_timeout_ns=1_000_000_000"]
