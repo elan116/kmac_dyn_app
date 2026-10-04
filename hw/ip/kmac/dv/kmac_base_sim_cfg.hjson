@@ -248,6 +248,13 @@
       reseed: 1
     }
     {
+      // DA-018 runs SHA3/SHAKE/cSHAKE/KMAC once each in shuffled order without a reset.
+      name: "{name}_app_dynamic_mixed_modes"
+      uvm_test_seq: kmac_app_dynamic_mixed_modes_vseq
+      run_opts: ["+test_timeout_ns=1_000_000_000"]
+      reseed: 25
+    }
+    {
       name: "{name}_app_with_partial_data"
       uvm_test_seq: kmac_app_with_partial_data_vseq
       run_opts: ["+test_timeout_ns=500_000_000"]
@@ -342,6 +349,10 @@
     {
       name: dynamic_app_invalid_cfg
       tests: ["{name}_app_dynamic_invalid_cfg"]
+    }
+    {
+      name: dynamic_app_mixed_modes
+      tests: ["{name}_app_dynamic_mixed_modes"]
     }
   ]
 }

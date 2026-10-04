@@ -437,6 +437,73 @@ class kmac_app_dynamic_invalid_cfg_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
+// DA-018: complete all four dynamic modes in a seed-dependent random order without resetting.
+class kmac_app_dynamic_mixed_modes_vseq extends kmac_app_dynamic_vseq;
+  `uvm_object_utils(kmac_app_dynamic_mixed_modes_vseq)
+  `uvm_object_new
+
+  // A legal initial mode is needed for the test's randomization before body() runs.
+  // body() assigns this non-random field before each inherited message transaction.
+  kmac_pkg::app_mode_e test_mode = kmac_pkg::AppSHA3;
+
+  constraint num_trans_c {
+    num_trans == 1;
+  }
+
+  constraint mixed_dynamic_modes_c {
+    app_mode == AppOtbn;
+    en_app == 1'b1;
+    kmac_en == (test_mode == kmac_pkg::AppKMAC);
+    hash_mode == (test_mode == kmac_pkg::AppSHA3 ? sha3_pkg::Sha3 :
+                  test_mode == kmac_pkg::AppShake ? sha3_pkg::Shake : sha3_pkg::CShake);
+    xof_en == 1'b0;
+    reg_en_sideload == (test_mode == kmac_pkg::AppKMAC);
+    entropy_ready == 1'b1;
+    if (test_mode == kmac_pkg::AppSHA3) {
+      strength inside {sha3_pkg::L224, sha3_pkg::L256, sha3_pkg::L384, sha3_pkg::L512};
+      // The base output_len_sha3_c constraint selects the digest length for this strength.
+    } else {
+      strength inside {sha3_pkg::L128, sha3_pkg::L256};
+      if (test_mode == kmac_pkg::AppKMAC) output_len == kmac_pkg::AppDigestW / 8;
+      else output_len == (strength == sha3_pkg::L128 ? 168 : 136);
+    }
+    msg.size() inside {[1:64]};
+  }
+
+  function void pre_randomize();
+    super.pre_randomize();
+    dynamic_app_mode_c.constraint_mode(0);
+  endfunction
+
+  virtual task body();
+    kmac_pkg::app_mode_e modes[$] = '{kmac_pkg::AppSHA3, kmac_pkg::AppShake,
+                                     kmac_pkg::AppCShake, kmac_pkg::AppKMAC};
+
+    // Shuffle guarantees every mode runs exactly once; selecting a random mode independently
+    // for each session could omit a mode. Different seeds can produce different permutations.
+    modes.shuffle();
+    foreach (modes[i]) begin
+      test_mode = modes[i];
+      cfg.require_valid_dynamic_sha3_rsp = (test_mode == kmac_pkg::AppSHA3);
+      cfg.require_valid_dynamic_fixed_rsp =
+          (test_mode inside {kmac_pkg::AppShake, kmac_pkg::AppCShake});
+      cfg.require_valid_dynamic_kmac_rsp = (test_mode == kmac_pkg::AppKMAC);
+      `uvm_info(`gfn, $sformatf("DA-018 session %0d/%0d: %0s",
+                              i + 1, modes.size(), test_mode.name()), UVM_LOW)
+      // Reconfigure CSRs and the sideload key as appropriate, then complete config/message/
+      // digest/termination/finish before changing mode. No inter-session reset is requested.
+      super.body();
+    end
+  endtask
+
+  virtual task post_start();
+    cfg.require_valid_dynamic_sha3_rsp = 1'b0;
+    cfg.require_valid_dynamic_fixed_rsp = 1'b0;
+    cfg.require_valid_dynamic_kmac_rsp = 1'b0;
+    super.post_start();
+  endtask
+endclass
+
 // DA-002: run a complete OTBN session for each supported SHA3 strength. A single randomized
 // strength per test seed would not guarantee coverage of all four SHA3 configurations; iterate
 // deliberately while keeping the existing SHAKE/XOF smoke test unchanged.

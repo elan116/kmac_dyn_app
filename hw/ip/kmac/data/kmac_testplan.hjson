@@ -137,6 +137,20 @@
       tests: ["{name}_app_dynamic_invalid_cfg"]
     }
     {
+      name: app_dynamic_mixed_modes
+      desc: '''
+            DA-018 runs all four dynamic application modes (SHA3, SHAKE, cSHAKE, and KMAC)
+            exactly once in a seed-dependent shuffled order within one test, without resetting
+            between sessions. Randomize legal strengths and non-empty messages. Use en_xof=0,
+            returning the selected SHA3 digest, one full SHAKE/cSHAKE rate, or the fixed KMAC
+            digest with a valid sideload key. Each session must complete configuration, message,
+            checked digest, separate termination, and finish before the next mode starts.
+            The passive scoreboard checks response lengths and DPI digests and rejects errors.
+            '''
+      stage: V2
+      tests: ["{name}_app_dynamic_mixed_modes"]
+    }
+    {
       name: app_with_partial_data
       desc: '''
             Based on the kmac_app test, this test will send partial data from application interface
