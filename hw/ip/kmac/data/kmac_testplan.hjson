@@ -126,6 +126,17 @@
       tests: ["{name}_app_dynamic"]
     }
     {
+      name: app_dynamic_invalid_cfg
+      desc: '''
+            Exercise every invalid combination of the dynamic interface's two-bit mode, three-bit
+            strength, and en_xof fields. The test chains all 50 rejected configurations, checking
+            that each produces one error response, accepts a separate termination request, and
+            completes with an error-free finish response.
+            '''
+      stage: V2
+      tests: ["{name}_app_dynamic_invalid_cfg"]
+    }
+    {
       name: app_with_partial_data
       desc: '''
             Based on the kmac_app test, this test will send partial data from application interface

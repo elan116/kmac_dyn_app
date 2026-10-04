@@ -453,7 +453,11 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       default: `uvm_fatal(get_full_name(), "Invalid dynamic application mode")
     endcase
 
-    if (kmac_en && entropy_ready) incr_and_predict_hash_cnt();
+    if (kmac_en && entropy_ready &&
+      (dynamic_session_cfg.kstrength inside {sha3_pkg::L128, sha3_pkg::L256}) &&
+      !dynamic_session_cfg.en_xof) begin
+      incr_and_predict_hash_cnt();
+    end
   endfunction
 
   // This task models the internal FSM of kmac_app module,
@@ -841,12 +845,35 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
           end
         end
         if (cfg.require_dynamic_invalid_cfg) begin
-          if (!dynamic_cfg_valid || dynamic_session_cfg.mode != kmac_pkg::AppSHA3 ||
-              dynamic_session_cfg.kstrength != sha3_pkg::L256 ||
-              !dynamic_session_cfg.en_xof || !dynamic_msg_complete ||
-              !dynamic_termination_seen) begin
+          bit mode_strength_valid;
+          bit xof_valid;
+
+          case (dynamic_session_cfg.mode)
+            kmac_pkg::AppSHA3: begin
+              mode_strength_valid = dynamic_session_cfg.kstrength inside {sha3_pkg::L224,
+                  sha3_pkg::L256, sha3_pkg::L384, sha3_pkg::L512};
+              xof_valid = !dynamic_session_cfg.en_xof;
+            end
+            kmac_pkg::AppShake, kmac_pkg::AppCShake: begin
+              mode_strength_valid = dynamic_session_cfg.kstrength inside {sha3_pkg::L128,
+                                                                          sha3_pkg::L256};
+              xof_valid = 1'b1;
+            end
+            kmac_pkg::AppKMAC: begin
+              mode_strength_valid = dynamic_session_cfg.kstrength inside {sha3_pkg::L128,
+                                                                          sha3_pkg::L256};
+              xof_valid = !dynamic_session_cfg.en_xof;
+            end
+            default: begin
+              mode_strength_valid = 1'b0;
+              xof_valid = 1'b0;
+            end
+          endcase
+
+          if (!dynamic_cfg_valid || (mode_strength_valid && xof_valid) ||
+              !dynamic_msg_complete || !dynamic_termination_seen) begin
             `uvm_fatal(get_full_name(),
-                       "DA-012 did not exercise invalid SHA3-256+XOF config through termination")
+                       "DA-012 did not exercise an invalid dynamic config through termination")
           end
           `DV_CHECK_EQ_FATAL(dynamic_error_rsp_count, 1)
           `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(), 0)

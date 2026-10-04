@@ -43,8 +43,8 @@ task kmac_app_dynamic_host_seq::body();
   int unsigned chunks_received = 0;
   int unsigned chunks_to_terminate;
 
-  // Reject unsupported request combinations early; the DUT reports these as service errors, but
-  // this sequence currently models only valid dynamic sessions.
+  // Reject unsupported request combinations early unless a directed negative test explicitly
+  // expects the DUT to report the service error.
   if (!expect_invalid_config) begin
     if (session_cfg.en_xof && !(session_cfg.mode inside {kmac_pkg::AppShake,
                                                         kmac_pkg::AppCShake})) begin
@@ -65,8 +65,9 @@ task kmac_app_dynamic_host_seq::body();
 
   // Non-XOF functions have a fixed response count determined by mode/strength. XOF functions can
   // continue squeezing indefinitely, so the host deliberately chooses a finite count instead.
-  chunks_to_terminate = session_cfg.en_xof ? xof_chunks_before_terminate :
-                        get_digest_chunk_count();
+  chunks_to_terminate = expect_invalid_config ? 1 :
+                        (session_cfg.en_xof ? xof_chunks_before_terminate :
+                         get_digest_chunk_count());
   while (chunks_received < chunks_to_terminate) begin
     p_sequencer.m_rsp_fifo.get(rsp);
     if (rsp.m_finish) begin

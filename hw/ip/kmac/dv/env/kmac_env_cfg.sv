@@ -54,6 +54,7 @@ class kmac_env_cfg extends cip_base_env_cfg #(.RAL_T(kmac_reg_block));
 
   // DA-012 deliberately sends an invalid dynamic mode/strength/XOF configuration.
   bit require_dynamic_invalid_cfg = 0;
+  sha3_pkg::keccak_strength_e dynamic_invalid_cfg_strength = sha3_pkg::L256;
 
   // These values are used by the test vector tests to select the correct vector text files.
   // These are unused by all other tests.

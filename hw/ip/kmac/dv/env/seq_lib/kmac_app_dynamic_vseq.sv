@@ -22,6 +22,10 @@ class kmac_app_dynamic_vseq extends kmac_app_vseq;
 
   function void pre_randomize();
     super.pre_randomize();
+    // The inherited sideload-test constraint is disabled in kmac_app_vseq.pre_start(), but
+    // test sequences are randomized before pre_start() runs. Disable it here so each dynamic
+    // test's own constraints can select sideloading only when needed (e.g. dynamic KMAC).
+    en_sideload_c.constraint_mode(0);
     // Disable only the inherited constraints that conflict with this dynamic session: the
     // static-app ID restriction, 64-byte static response size, and base SW-only KMAC XOF rule.
     app_mode_c.constraint_mode(0);
@@ -183,8 +187,7 @@ class kmac_app_dynamic_kmac_vseq extends kmac_app_dynamic_vseq;
   function void pre_randomize();
     super.pre_randomize();
     // Replace the parent's SHAKE-XOF configuration with dynamic KMAC's fixed-length settings.
-    // The shared hash_mode_c constraint contains an AppOtbn-specific branch permitting KMAC, so
-    // keep it enabled to retain the common mode consistency checks.
+    // Keep the shared AppOtbn hash-mode consistency constraint enabled for KMAC.
     dynamic_app_mode_c.constraint_mode(0);
   endfunction
 
@@ -328,10 +331,16 @@ class kmac_app_dynamic_xof_stream_vseq extends kmac_app_dynamic_vseq;
   endtask
 endclass
 
-// DA-012: the DUT must reject SHA3-256 with XOF enabled, then complete error/finish framing.
+// DA-012: sweep every invalid dynamic mode/strength/XOF combination through error and finish.
 class kmac_app_dynamic_invalid_cfg_vseq extends kmac_app_dynamic_vseq;
   `uvm_object_utils(kmac_app_dynamic_invalid_cfg_vseq)
   `uvm_object_new
+
+  localparam int unsigned NumInvalidDynamicCfgs = 50;
+
+  kmac_pkg::app_mode_e test_mode = kmac_pkg::AppSHA3;
+  sha3_pkg::keccak_strength_e test_strength = sha3_pkg::L256;
+  bit test_xof = 1'b1;
 
   constraint num_trans_c {
     num_trans == 1;
@@ -340,12 +349,18 @@ class kmac_app_dynamic_invalid_cfg_vseq extends kmac_app_dynamic_vseq;
   constraint invalid_dynamic_cfg_c {
     app_mode == AppOtbn;
     en_app == 1'b1;
-    kmac_en == 1'b0;
-    hash_mode == sha3_pkg::Sha3;
+    kmac_en == (test_mode == kmac_pkg::AppKMAC);
+    hash_mode == (test_mode == kmac_pkg::AppSHA3 ? sha3_pkg::Sha3 :
+                  test_mode == kmac_pkg::AppShake ? sha3_pkg::Shake : sha3_pkg::CShake);
+    // Keep software-side init/read operations on a legal strength. The actual dynamic config
+    // strength is overridden below so reserved encodings are tested without corrupting setup.
     strength == sha3_pkg::L256;
-    xof_en == 1'b1;
-    // Keep the software-side output length legal for SHA3-256; the invalid field is en_xof.
-    output_len == 32;
+    xof_en == test_xof;
+    reg_en_sideload == (test_mode == kmac_pkg::AppKMAC);
+    entropy_ready == 1'b1;
+    if (test_mode == kmac_pkg::AppSHA3) output_len == 32;
+    else if (test_mode == kmac_pkg::AppKMAC) output_len == kmac_pkg::AppDigestW / 8;
+    else output_len == 16;
     msg.size() == 13;
   }
 
@@ -354,13 +369,70 @@ class kmac_app_dynamic_invalid_cfg_vseq extends kmac_app_dynamic_vseq;
     dynamic_app_mode_c.constraint_mode(0);
   endfunction
 
+  function automatic bit is_valid_dynamic_cfg(kmac_pkg::app_mode_e mode,
+                                               sha3_pkg::keccak_strength_e cfg_strength,
+                                               bit cfg_xof);
+    bit strength_valid;
+    bit xof_valid;
+
+    case (mode)
+      kmac_pkg::AppSHA3: begin
+        strength_valid = cfg_strength inside {sha3_pkg::L224, sha3_pkg::L256,
+                                              sha3_pkg::L384, sha3_pkg::L512};
+        xof_valid = !cfg_xof;
+      end
+      kmac_pkg::AppShake, kmac_pkg::AppCShake: begin
+        strength_valid = cfg_strength inside {sha3_pkg::L128, sha3_pkg::L256};
+        xof_valid = 1'b1;
+      end
+      kmac_pkg::AppKMAC: begin
+        strength_valid = cfg_strength inside {sha3_pkg::L128, sha3_pkg::L256};
+        xof_valid = !cfg_xof;
+      end
+      default: begin
+        strength_valid = 1'b0;
+        xof_valid = 1'b0;
+      end
+    endcase
+    return strength_valid && xof_valid;
+  endfunction
+
   virtual task pre_start();
     super.pre_start();
     cfg.require_dynamic_invalid_cfg = 1'b1;
   endtask
 
+  virtual task body();
+    int unsigned invalid_cfgs_run = 0;
+
+    // All two-bit mode encodings map to SHA3/SHAKE/cSHAKE/KMAC. The strength field has eight
+    // encodings and en_xof is one bit, giving 64 combinations. Fourteen are legal; exercise each
+    // of the other 50 exactly once. Each parent body call runs a complete app session.
+    for (int unsigned mode_idx = 0; mode_idx < 4; mode_idx++) begin
+      for (int unsigned strength_idx = 0; strength_idx < 8; strength_idx++) begin
+        for (int unsigned xof_idx = 0; xof_idx < 2; xof_idx++) begin
+          test_mode = kmac_pkg::app_mode_e'(mode_idx);
+          test_strength = sha3_pkg::keccak_strength_e'(strength_idx);
+          test_xof = (xof_idx != 0);
+
+          if (!is_valid_dynamic_cfg(test_mode, test_strength, test_xof)) begin
+            cfg.dynamic_invalid_cfg_strength = test_strength;
+            `uvm_info(`gfn,
+                      $sformatf("DA-012 invalid cfg mode=%0s strength=%0d en_xof=%0b",
+                                test_mode.name(), test_strength, test_xof), UVM_LOW)
+            super.body();
+            invalid_cfgs_run++;
+          end
+        end
+      end
+    end
+
+    `DV_CHECK_EQ_FATAL(invalid_cfgs_run, NumInvalidDynamicCfgs)
+  endtask
+
   virtual task post_start();
     cfg.require_dynamic_invalid_cfg = 1'b0;
+    cfg.dynamic_invalid_cfg_strength = sha3_pkg::L256;
     super.post_start();
   endtask
 endclass

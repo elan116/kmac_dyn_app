@@ -586,7 +586,8 @@ class kmac_base_vseq extends cip_base_vseq #(
       kmac_pkg::app_ses_config_t dynamic_cfg = '0;
 
       dynamic_cfg.prefix_mode = 1'b0;
-      dynamic_cfg.kstrength = strength;
+      dynamic_cfg.kstrength = cfg.require_dynamic_invalid_cfg ? cfg.dynamic_invalid_cfg_strength :
+                           strength;
       if (kmac_en) begin
         dynamic_cfg.mode = kmac_pkg::AppKMAC;
       end else begin
@@ -598,7 +599,7 @@ class kmac_base_vseq extends cip_base_vseq #(
         endcase
       end
       // Vseq xof_en also covers SW KMAC-XOF, which the dynamic app interface does not allow.
-      // DA-012 opts in to transmitting an invalid SHA3+XOF config so the DUT can report the error.
+      // DA-012 opts in to transmitting its selected invalid mode/strength/XOF combination.
       dynamic_cfg.en_xof = cfg.require_dynamic_invalid_cfg ? xof_en :
                xof_en && (dynamic_cfg.mode inside {kmac_pkg::AppShake,
                            kmac_pkg::AppCShake});

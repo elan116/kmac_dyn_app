@@ -241,7 +241,7 @@
       reseed: 1
     }
     {
-      // DA-012 sends SHA3-256 with XOF enabled and checks the rejection error and finish response.
+      // DA-012 chains all 50 invalid dynamic mode/strength/XOF encodings and checks error/finish.
       name: "{name}_app_dynamic_invalid_cfg"
       uvm_test_seq: kmac_app_dynamic_invalid_cfg_vseq
       run_opts: ["+test_timeout_ns=1_000_000_000"]
