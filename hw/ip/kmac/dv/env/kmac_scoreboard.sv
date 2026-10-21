@@ -127,6 +127,11 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
   bit dynamic_termination_seen;
   bit dynamic_rsp_error;
   int unsigned dynamic_error_rsp_count;
+  // Coverage snapshots contain no key data. Completion history survives ordinary clear_state().
+  bit dynamic_key_valid_at_config = 0;
+  bit dynamic_finished_history_valid = 0;
+  kmac_pkg::app_mode_e dynamic_last_finished_mode = kmac_pkg::AppSHA3;
+  bit dynamic_last_finished_error = 0;
   // The active session temporarily overrides software-selected mode fields. Save them so CSR-mode
   // checking resumes with the pre-session values once OTBN finishes.
   bit dynamic_prev_kmac_en;
@@ -385,19 +390,12 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
 
             // sample sideload-related coverage
             if (cfg.en_cov) begin
-              // Note that all arguments to the covergroup sample() function are the same,
-              // this is due to the nature of the arguments that this function takes:
-              //
-              // - `en_sideload`: this bit indicates whether sideloading mode is active
-              // - `in_kmac`    : this bit indicates whether we are operating in KMAC mode
-              // - `app_keymgr` : this bit indicates whether we are using the Keymgr-specific App
-              //                  interface
-              //
-              // Checking whether the current application mode is the AppKeymgr mode gives us
-              // sufficient information for all three of these arguments due to the nature of this
-              // particular interface.
-              cov.sideload_cg.sample(app_mode == AppKeymgr,
-                                     app_mode == AppKeymgr,
+              // Both static KeyMgr and dynamic KMAC consume sideload keys regardless of the
+              // software CSR sideload enable. OTBN must not be labeled as the KeyMgr app ID.
+              cov.sideload_cg.sample(app_mode == AppKeymgr ||
+                                     (app_mode == AppOtbn && kmac_en),
+                                     app_mode == AppKeymgr ||
+                                     (app_mode == AppOtbn && kmac_en),
                                      app_mode == AppKeymgr);
             end
 
@@ -438,6 +436,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     dynamic_termination_seen = 1'b0;
     dynamic_rsp_error = 1'b0;
     dynamic_error_rsp_count = 0;
+    dynamic_key_valid_at_config = cfg.keymgr_sideload_agent_cfg.vif.sideload_key.valid;
     dynamic_digest_share0.delete();
     dynamic_digest_share1.delete();
     strength = dynamic_session_cfg.kstrength;
@@ -453,10 +452,107 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       default: `uvm_fatal(get_full_name(), "Invalid dynamic application mode")
     endcase
 
+    if (cfg.en_cov) begin
+      // Count the run-time config accepted from OTBN; keep this separate from CSR mode coverage.
+      cov.dynamic_app_config_cg.sample(dynamic_session_cfg.mode,
+                                       dynamic_session_cfg.kstrength,
+                                       dynamic_session_cfg.en_xof, 0);
+    end
+
     if (kmac_en && entropy_ready &&
       (dynamic_session_cfg.kstrength inside {sha3_pkg::L128, sha3_pkg::L256}) &&
       !dynamic_session_cfg.en_xof) begin
       incr_and_predict_hash_cnt();
+    end
+  endfunction
+
+  function bit [5:0] dynamic_coverage_tuple();
+    return {dynamic_session_cfg.mode, dynamic_session_cfg.kstrength,
+            dynamic_session_cfg.en_xof};
+  endfunction
+
+  // Called only for the monitor's accepted finish, before clear_state destroys the session.
+  // Request framing is FIFO-processed state, as in the existing checks. Never infer an internal
+  // pending/drain count by comparing independently consumed request and response streams.
+  function void sample_dynamic_finished_session();
+    bit [5:0] tuple = dynamic_coverage_tuple();
+    int unsigned chunks = dynamic_digest_share0.size() / (kmac_pkg::DynAppDigestW / 8);
+    int unsigned rate_chunks;
+    int unsigned rate_category;
+    int unsigned logical_bytes;
+
+    if (cfg.en_cov && dynamic_cfg_valid) begin
+      if (dynamic_finished_history_valid) begin
+        // A transition is sampled only after the prior session's finish was accepted.
+        cov.dynamic_app_transition_cg.sample(dynamic_last_finished_mode,
+            dynamic_session_cfg.mode, dynamic_last_finished_error, dynamic_rsp_error);
+      end
+      // Do not invent a software error code from the service interface's one-bit m_error.
+      if (!kmac_dynamic_tuple_legal(tuple)) begin
+        if (dynamic_rsp_error) begin
+          // Record only rejected invalid configurations that actually produced an error response
+          // and reached this accepted finish; config-only invalid coverage was sampled at decode.
+          cov.dynamic_app_config_cg.sample(dynamic_session_cfg.mode,
+                                           dynamic_session_cfg.kstrength,
+                                           dynamic_session_cfg.en_xof, 1);
+        end
+      end else begin
+        // Summarize the just-finished legal session: observed framing, message size, and outcome.
+        cov.dynamic_app_session_cg.sample(tuple, dynamic_msg_beats_seen,
+            dynamic_msg_complete && kmac_app_msg.size() == 0,
+            {dynamic_cfg_req_seen, dynamic_msg_complete, dynamic_termination_seen},
+            dynamic_rsp_error);
+        if (dynamic_msg_complete) cov.msg_len_cg.sample(kmac_app_msg.size());
+        if (dynamic_session_cfg.mode inside {kmac_pkg::AppShake, kmac_pkg::AppCShake}) begin
+          rate_chunks = (dynamic_session_cfg.kstrength == sha3_pkg::L128 ? 168 : 136) /
+                        (kmac_pkg::DynAppDigestW / 8);
+          if (chunks == 0) rate_category = 0;
+          else if (chunks < rate_chunks) rate_category = 1;
+          else if (chunks == rate_chunks) rate_category = 2;
+          else if (chunks < 2 * rate_chunks) rate_category = 3;
+          else if (chunks == 2 * rate_chunks) rate_category = 4;
+          else rate_category = 5;
+          // Count accepted non-error digest beats against the mode's rate; do not infer pending
+          // responses or drain behavior from the independently consumed request stream.
+          cov.dynamic_app_stream_cg.sample(tuple, chunks, rate_category,
+                                           dynamic_termination_seen, dynamic_rsp_error);
+        end
+        if (dynamic_session_cfg.mode == kmac_pkg::AppSHA3 && !dynamic_rsp_error) begin
+          case (dynamic_session_cfg.kstrength)
+            sha3_pkg::L224: logical_bytes = 28;
+            sha3_pkg::L256: logical_bytes = 32;
+            sha3_pkg::L384: logical_bytes = 48;
+            sha3_pkg::L512: logical_bytes = 64;
+            default: logical_bytes = 0; // Excluded by the legal-tuple guard above.
+          endcase
+          // Compare the logical SHA3 digest length with accepted transport bytes (notably 224:28/32).
+          cov.dynamic_app_sha3_digest_cg.sample(logical_bytes, dynamic_digest_share0.size());
+        end
+        if (dynamic_session_cfg.mode == kmac_pkg::AppKMAC) begin
+          // Capture key metadata only; never place secret key bits into functional coverage.
+          cov.dynamic_app_key_cg.sample(dynamic_key_valid_at_config, kmac_pkg::Key256,
+                                        1, dynamic_rsp_error);
+        end
+        if (!dynamic_rsp_error &&
+            dynamic_session_cfg.mode inside {kmac_pkg::AppCShake, kmac_pkg::AppKMAC}) begin
+          string fname;
+          string custom_str;
+          // This helper also samples the existing nonsecret prefix_range_cg. Only decode for
+          // legal, non-error sessions; rejected configurations must never enter the DPI path.
+          get_fname_and_custom_str(1, fname, custom_str);
+          // Record effective CSR-versus-application prefix source and N/S lengths only.
+          cov.dynamic_app_prefix_cg.sample(dynamic_session_cfg.mode,
+              dynamic_session_cfg.mode == kmac_pkg::AppKMAC,
+              fname.len(), custom_str.len(), dynamic_rsp_error);
+        end
+      end
+      cov.app_cg_wrappers[AppOtbn].app_sample(dynamic_msg_beats_seen == 1, '0,
+                                             dynamic_rsp_error, 1, 0, 1);
+    end
+    if (dynamic_cfg_valid) begin
+      dynamic_finished_history_valid = 1;
+      dynamic_last_finished_mode = dynamic_session_cfg.mode;
+      dynamic_last_finished_error = dynamic_rsp_error;
     end
   endfunction
 
@@ -613,16 +709,31 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
 
       // An item should only arrive when the currently selected app is app_index.
       // Wait until the KMAC_APP operation is active
-      // in_kmac_app is set when the DUT has entered a KMAC_APP operation 
+      // in_kmac_app is set when the DUT has entered a KMAC_APP operation
       // and remains true for the whole active transaction window.
       // while the DUT is idle, in_kmac_app == 0
       wait(in_kmac_app);
       if (app_index == AppOtbn) begin
+        if (cfg.en_cov) begin
+          int unsigned request_phase;
+          // Classify this accepted OTBN request from previously processed config/message markers;
+          // use monitor-decoded byte count and req_last rather than sequence intent.
+          request_phase = !dynamic_cfg_req_seen ? 0 : (!dynamic_msg_complete ? 1 : 2);
+          cov.dynamic_app_request_cg.sample(request_phase, item.m_num_bytes, item.m_last);
+        end
         if (!dynamic_cfg_req_seen) begin
           // Do not append config bytes to the hash input. detect_kmac_app_start() decoded this same
           // accepted request directly from the interface before this FIFO consumer runs.
           dynamic_cfg_req_seen = 1'b1;
         end else if (!dynamic_msg_complete) begin
+          if (cfg.en_cov) begin
+            bit [keymgr_pkg::KmacDataIfWidth/8-1:0] strb;
+            // The passive monitor derives m_num_bytes from the contiguous observed strobe.
+            // Config and termination are deliberately excluded from the legacy message bins.
+            strb = (1 << item.m_num_bytes) - 1;
+            cov.app_cg_wrappers[AppOtbn].app_sample(0, strb, 0, item.m_last,
+                                                   in_keccak_rounds);
+          end
           // Dynamic OTBN is configured as masked in the app table, so recover the logical message
           // byte by XORing the two request shares. m_last here marks the end of message absorption.
           if (cfg.require_dynamic_empty_msg) begin
@@ -724,7 +835,8 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
                                     '0,
                                     item.m_rsp.m_error,
                                     1,
-                                    0);
+                                    0,
+                                    1);
               cg_wrapper.app_cfg_reg_sample(hash_mode);
             end
 
@@ -951,6 +1063,7 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
           `DV_CHECK_EQ_FATAL(dynamic_digest_share0.size(), kmac_pkg::AppDigestW / 8)
           `DV_CHECK_EQ_FATAL(dynamic_digest_share1.size(), kmac_pkg::AppDigestW / 8)
         end
+        sample_dynamic_finished_session();
         if (!dynamic_rsp_error && do_check_digest) check_digest();
         in_kmac_app = 0;
         sha3_squeeze = 0;
@@ -1702,6 +1815,10 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
 
     first_op_after_rst = 1;
     m_part_way_through_req = 0;
+    // Hardware reset, unlike per-hash clear_state(), breaks completed-session history.
+    dynamic_finished_history_valid = 0;
+    dynamic_last_finished_mode = kmac_pkg::AppSHA3;
+    dynamic_last_finished_error = 0;
 
     // status tracking bits
     sha3_idle         = ral.status.sha3_idle.get_reset();
@@ -1755,6 +1872,10 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     dynamic_termination_seen = 0;
     dynamic_rsp_error = 0;
     dynamic_error_rsp_count = 0;
+    dynamic_msg_beats_seen = 0;
+    dynamic_key_valid_at_config = 0;
+    dynamic_prev_kmac_en = 0;
+    dynamic_prev_hash_mode = sha3_pkg::Sha3;
     dynamic_digest_share0.delete();
     dynamic_digest_share1.delete();
   endfunction
@@ -1878,7 +1999,8 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       // (xof/non-xof)
       cov.sample_cfg(kmac_en, xof_en, strength, actual_hash_mode, key_len,
                      `gmv(ral.cfg_shadowed.msg_endianness), `gmv(ral.cfg_shadowed.state_endianness),
-                     `gmv(ral.cfg_shadowed.sideload), entropy_mode, entropy_fast_process);
+                     (in_kmac_app && app_mode == AppOtbn) ? kmac_en :
+                       `gmv(ral.cfg_shadowed.sideload), entropy_mode, entropy_fast_process);
 
       // sample coverage on the digest length
       if (cfg.en_cov) begin
@@ -1980,7 +2102,8 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
       ////////////
       sha3_pkg::CShake: begin
         // Get the fname and custom_str string values from the writes to PREFIX csrs
-        get_fname_and_custom_str(in_kmac_app, fname, custom_str);
+        get_fname_and_custom_str(in_kmac_app, fname, custom_str,
+               !(in_kmac_app && app_mode == AppOtbn));
 
         if (kmac_en) begin
           // Calculate the unmasked key
@@ -2125,7 +2248,8 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
   //  `encode_string(S) = left_encode(len(S)) || S`
   virtual function void get_fname_and_custom_str(bit en_kmac_app,
                                                  ref string fname,
-                                                 ref string custom_str);
+                                                 ref string custom_str,
+                                                 input bit sample_prefix = 1);
     bit [7:0] prefix_bytes[$];
     // The very first byte of each encoded string represents the number of bytes
     // that make up the encoded string's length.
@@ -2149,7 +2273,9 @@ class kmac_scoreboard extends cip_base_scoreboard #(.CFG_T(kmac_env_cfg),
     end
 
     // sample coverage
-    if (cfg.en_cov) begin
+    // Dynamic completion coverage decodes/samples this prefix once at the accepted finish.
+    // check_digest() may decode again for DPI, but must not double-count prefix byte coverage.
+    if (cfg.en_cov && sample_prefix) begin
       foreach (prefix_bytes[i]) begin
         cov.prefix_range_cg.sample(byte'(prefix_bytes[i]));
       end
